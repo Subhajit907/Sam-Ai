@@ -5,6 +5,11 @@ import pyautogui
 import webbrowser
 import os
 from dotenv import load_dotenv
+import sounddevice as sd
+import soundfile as sf
+import numpy as np
+from comtypes.client import CreateObject
+import time
 
 load_dotenv()
 
@@ -18,46 +23,74 @@ if not OPENAI_API_KEY:
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-engine = pyttsx3.init()
+# Use Windows SAPI5 directly via comtypes
+try:
+    speaker = CreateObject("SAPI.SpVoice")
+except Exception as e:
+    print(f"Warning: Could not initialize SAPI speaker: {e}")
+    speaker = None
+
 recognizer = sr.Recognizer()
 
 # ===================== SPEAK =====================
 def speak(text):
-    print("🤖 Sam:", text)
-    engine.say(text)
-    engine.runAndWait()
+    print("Sam:", text)
+    try:
+        if speaker:
+            # Use SAPI5 directly
+            speaker.Speak(text, 0)
+            time.sleep(0.5)  # Give it time to speak
+        else:
+            # Fallback to pyttsx3
+            engine = pyttsx3.init('sapi5')
+            engine.setProperty('rate', 150)
+            engine.setProperty('volume', 1.0)
+            engine.say(text)
+            engine.runAndWait()
+    except Exception as e:
+        print(f"Voice error: {e}")
 
-# ===================== LISTEN =====================
+# LISTEN
 def listen():
     try:
-        with sr.Microphone() as source:
-            print("🎧 Listening...")
-            recognizer.adjust_for_ambient_noise(source)
-            audio = recognizer.listen(source)
-
+       
+        print("Listening...")
+        duration = 5 
+        sample_rate = 16000
+        audio_data = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype='int16')
+        sd.wait()
+        
+        
+        from io import BytesIO
+        audio_bytes = audio_data.tobytes()
+        audio = sr.AudioData(audio_bytes, sample_rate, 2)
+        
         try:
             text = recognizer.recognize_google(audio)
-            print("🗣️ You:", text)
+            print("You:", text)
             return text
-        except:
+        except sr.UnknownValueError:
+            print("Sorry, I didn't catch that. Please try again.")
             return ""
-    except:
-        # Fallback to text input if microphone is not available
-        text = input("🗣️ You (text input): ")
-        return text
+        except sr.RequestError:
+            print("Error with the speech recognition service.")
+            return ""
+    except Exception as e:
+        print(f"Microphone error: {e}")
+        return ""
 
-# ===================== OPENAI =====================
+# OPENAI
 def ask_openai(prompt):
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are Jarvis, a smart AI assistant that can control the computer."},
+            {"role": "system", "content": "You are Sam, a smart AI assistant that can control the computer."},
             {"role": "user", "content": prompt}
         ]
     )
     return response.choices[0].message.content
 
-# ===================== COMMANDS =====================
+# COMMANDS 
 def handle_command(command):
     cmd = command.lower()
 
@@ -86,9 +119,8 @@ def handle_command(command):
         reply = ask_openai(command)
         speak(reply)
 
-# ===================== MAIN =====================
 def main():
-    speak("Hello, I am Jarvis. How can I help you?")
+    speak("Hello, I am Sam. How can I help you?")
     while True:
         command = listen()
         if command:
