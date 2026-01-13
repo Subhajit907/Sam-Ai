@@ -2,4 +2,3 @@ openai
 SpeechRecognition
 pyttsx3
 pyautogui
-pyaudio

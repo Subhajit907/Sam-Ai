@@ -1,15 +1,22 @@
-import openai
+from openai import OpenAI
 import speech_recognition as sr
 import pyttsx3
 import pyautogui
 import webbrowser
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ===================== CONFIG =====================
-DEEPSEEK_API_KEY = "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"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-openai.api_key = DEEPSEEK_API_KEY
-openai.api_base = "https://api.deepseek.com"
+if not OPENAI_API_KEY:
+    print("Error: OPENAI_API_KEY environment variable is not set!")
+    print("Please add your API key to the .env file")
+    exit(1)
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 engine = pyttsx3.init()
 recognizer = sr.Recognizer()
@@ -22,22 +29,27 @@ def speak(text):
 
 # ===================== LISTEN =====================
 def listen():
-    with sr.Microphone() as source:
-        print("🎧 Listening...")
-        recognizer.adjust_for_ambient_noise(source)
-        audio = recognizer.listen(source)
-
     try:
-        text = recognizer.recognize_google(audio)
-        print("🗣️ You:", text)
-        return text
-    except:
-        return ""
+        with sr.Microphone() as source:
+            print("🎧 Listening...")
+            recognizer.adjust_for_ambient_noise(source)
+            audio = recognizer.listen(source)
 
-# ===================== DEEPSEEK =====================
-def ask_deepseek(prompt):
-    response = openai.ChatCompletion.create(
-        model="deepseek-reasoner",
+        try:
+            text = recognizer.recognize_google(audio)
+            print("🗣️ You:", text)
+            return text
+        except:
+            return ""
+    except:
+        # Fallback to text input if microphone is not available
+        text = input("🗣️ You (text input): ")
+        return text
+
+# ===================== OPENAI =====================
+def ask_openai(prompt):
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": "You are Jarvis, a smart AI assistant that can control the computer."},
             {"role": "user", "content": prompt}
@@ -71,7 +83,7 @@ def handle_command(command):
         os.system("shutdown /s /t 5")
 
     else:
-        reply = ask_deepseek(command)
+        reply = ask_openai(command)
         speak(reply)
 
 # ===================== MAIN =====================
