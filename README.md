@@ -36,24 +36,52 @@ A powerful voice-controlled AI assistant that can create projects, control your 
 - VS Code (optional, for project development)
 
 ### Setup
-
 1. Clone or download this repository:
 ```bash
 cd Sam-Ai
 ```
 
-2. Create a virtual environment:
+2. Create a virtual environment (use `python3` if `python` points to Python 2 on your system):
 ```bash
 python -m venv .venv
-.venv\Scripts\Activate.ps1
 ```
 
-3. Install dependencies:
+3. Activate the virtual environment (choose the command for your OS/shell):
+- macOS / Linux (bash, zsh):
+```bash
+source .venv/bin/activate
+```
+- Windows PowerShell:
+```powershell
+.venv\Scripts\Activate.ps1
+```
+- Windows CMD:
+```cmd
+.venv\Scripts\activate.bat
+```
+
+4. Install system dependencies (required for audio libraries) — platform-specific:
+- macOS (Homebrew):
+```bash
+brew install portaudio
+```
+- Debian/Ubuntu:
+```bash
+sudo apt update
+sudo apt install -y portaudio19-dev libsndfile1 libsndfile1-dev build-essential
+```
+- Fedora:
+```bash
+sudo dnf install -y portaudio-devel libsndfile
+```
+Note: These packages are required for `sounddevice`, `soundfile` or `pyaudio` to build/install correctly.
+
+5. Install Python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Set up your OpenAI API key:
+6. Set up your OpenAI API key:
    - Create a `.env` file in the project root
    - Add your API key:
    ```
@@ -61,7 +89,7 @@ pip install -r requirements.txt
    ```
    - Get your key from [OpenAI Platform](https://platform.openai.com)
 
-5. Run Sam:
+7. Run Sam:
 ```bash
 python sam.py
 ```
