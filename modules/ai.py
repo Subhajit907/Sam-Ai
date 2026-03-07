@@ -16,21 +16,50 @@ if not OPENAI_API_KEY:
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+SYSTEM_PROMPT = """You are Alia, a friendly and natural AI assistant. Talk like a real person — conversational, warm, and concise.
+
+Rules:
+- Keep responses short and natural unless the user asks for detail
+- Don't use bullet points or headers in spoken replies — just talk
+- Show personality: be friendly, occasionally light-hearted
+- Remember what was said earlier in the conversation
+- If you don't know something, say so naturally
+- Never sound robotic or formal"""
+
+# Conversation history for natural back-and-forth
+_conversation_history = [{"role": "system", "content": SYSTEM_PROMPT}]
+MAX_HISTORY = 20  # keep last 20 messages to avoid token bloat
+
 
 def ask_openai(prompt):
-    """Send a prompt to OpenAI and get a response"""
+    """Send a prompt to OpenAI and get a response, maintaining conversation history."""
+    global _conversation_history
+
+    _conversation_history.append({"role": "user", "content": prompt})
+
+    # Trim history if too long (keep system prompt + last MAX_HISTORY messages)
+    if len(_conversation_history) > MAX_HISTORY + 1:
+        _conversation_history = [_conversation_history[0]] + _conversation_history[-(MAX_HISTORY):]
+
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are Sam, a smart AI assistant that can control the computer."},
-                {"role": "user", "content": prompt}
-            ]
+            model="gpt-4o-mini",   # faster and cheaper than gpt-3.5-turbo, better quality
+            messages=_conversation_history,
+            temperature=0.85,       # more natural, varied responses
+            max_tokens=300,         # keep spoken replies concise
         )
-        return response.choices[0].message.content
+        reply = response.choices[0].message.content
+        _conversation_history.append({"role": "assistant", "content": reply})
+        return reply
     except Exception as e:
         print(f"Error communicating with OpenAI: {e}")
-        return "Sorry, I encountered an error. Please try again."
+        return "Sorry, something went wrong on my end."
+
+
+def reset_conversation():
+    """Clear conversation history (start fresh)."""
+    global _conversation_history
+    _conversation_history = [{"role": "system", "content": SYSTEM_PROMPT}]
 
 
 def generate_game_code(project_name, game_type):

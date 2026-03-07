@@ -1,0 +1,4 @@
+"""Global state shared between modules"""
+
+# Set to the AliaGUI instance after launch
+gui = None

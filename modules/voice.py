@@ -1,68 +1,171 @@
 """Voice and Audio Module - cross-platform speech synthesis and recognition"""
 
 import sys
-import time
+import subprocess
+import tempfile
+import os
+import threading
 import speech_recognition as sr
-import pyttsx3
-import sounddevice as sd
+from openai import OpenAI
+from dotenv import load_dotenv
 
-# Initialize recognizer
+load_dotenv()
+
+_tts_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+
+from modules import state
+
+# Recognizer — calibrated once at startup, not on every call
 recognizer = sr.Recognizer()
+recognizer.dynamic_energy_threshold = True
+recognizer.pause_threshold = 1.2       # wait 1.2s of silence before ending phrase
+recognizer.phrase_threshold = 0.3
+recognizer.non_speaking_duration = 0.4
 
-# Initialize speaker only on Windows (SAPI). On other platforms use pyttsx3.
-speaker = None
-if sys.platform == "win32":
+_calibrated = False
+
+def _calibrate():
+    """Calibrate mic for ambient noise once at startup."""
+    global _calibrated
+    if _calibrated:
+        return
     try:
-        from comtypes.client import CreateObject
-        speaker = CreateObject("SAPI.SpVoice")
-    except Exception as e:
-        print(f"Warning: Could not initialize SAPI speaker: {e}")
-        speaker = None
+        with sr.Microphone() as source:
+            recognizer.adjust_for_ambient_noise(source, duration=1.0)
+        _calibrated = True
+    except Exception:
+        pass
+
+# Audio captured when user interrupts Alia mid-speech
+_interrupted_audio = None
 
 
 def speak(text):
-    """Convert text to speech (platform-aware)."""
-    print("🤖 Sam:", text)
+    """Speak text. If user talks over Alia, stop and capture their audio."""
+    global _interrupted_audio
+    print("Alia:", text)
+    if state.gui:
+        state.gui.set_state("speaking", f"Alia: {text}")
+
     try:
-        if speaker and sys.platform == "win32":
-            # Use SAPI5 on Windows when available
-            speaker.Speak(text, 0)
-            time.sleep(0.5)  # Give it time to speak
+        response = _tts_client.audio.speech.create(
+            model="tts-1",
+            voice="nova",
+            input=text,
+            speed=1.05,
+        )
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            tmp_path = f.name
+            f.write(response.content)
+
+        # Start playback as a non-blocking process
+        if sys.platform == "darwin":
+            process = subprocess.Popen(["afplay", tmp_path])
         else:
-            # Cross-platform fallback to pyttsx3
-            engine = pyttsx3.init()
-            engine.setProperty("rate", 150)
-            engine.setProperty("volume", 1.0)
-            engine.say(text)
-            engine.runAndWait()
+            process = subprocess.Popen(
+                ["ffplay", "-nodisp", "-autoexit", tmp_path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+        # Watch mic in parallel — if user speaks, kill playback
+        captured = [None]
+
+        def watch_for_interruption():
+            watcher = sr.Recognizer()
+            watcher.energy_threshold = recognizer.energy_threshold * 1.5
+            watcher.dynamic_energy_threshold = False
+            watcher.pause_threshold = 1.2
+            try:
+                with sr.Microphone() as source:
+                    while process.poll() is None:   # while audio still playing
+                        try:
+                            audio = watcher.listen(source, timeout=0.4, phrase_time_limit=20)
+                            # User spoke — cut Alia off
+                            process.kill()
+                            captured[0] = audio
+                            break
+                        except sr.WaitTimeoutError:
+                            continue
+            except Exception:
+                pass
+
+        watcher_thread = threading.Thread(target=watch_for_interruption, daemon=True)
+        watcher_thread.start()
+        process.wait()
+        watcher_thread.join(timeout=1.0)
+
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+        if captured[0]:
+            _interrupted_audio = captured[0]
+            if state.gui:
+                state.gui.set_state("thinking", "You interrupted...")
+            return  # don't set idle — listen() will handle it
+
     except Exception as e:
         print(f"Voice error: {e}")
+        if sys.platform == "darwin":
+            subprocess.run(["say", text])
+
+    if state.gui:
+        state.gui.set_state("idle")
 
 
 def listen():
-    """Listen for voice commands using the microphone"""
-    try:
-        print("🎧 Listening...")
-        duration = 10  # seconds
-        sample_rate = 16000
-        audio_data = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype="int16")
-        sd.wait()
+    """Listen for voice input. Uses interrupted audio first if available."""
+    global _interrupted_audio
 
-        # Convert to audio format for recognition
-        audio_bytes = audio_data.tobytes()
-        # sample_width=2 (bytes) for int16
-        audio = sr.AudioData(audio_bytes, sample_rate, 2)
+    # If user talked over Alia, transcribe that captured audio immediately
+    if _interrupted_audio:
+        audio = _interrupted_audio
+        _interrupted_audio = None
+        try:
+            text = recognizer.recognize_google(audio)
+            print(f"You: {text}")
+            if state.gui:
+                state.gui.set_state("thinking", f"You: {text}")
+            return text
+        except sr.UnknownValueError:
+            pass  # fall through to normal listen
+        except Exception:
+            pass
+
+    if state.gui:
+        state.gui.set_state("listening", "Listening...")
+
+    _calibrate()  # no-op after first call
+
+    try:
+        with sr.Microphone() as source:
+            print("Listening...")
+            try:
+                # timeout=8: wait up to 8s for speech to start
+                audio = recognizer.listen(source, timeout=8, phrase_time_limit=25)
+            except sr.WaitTimeoutError:
+                if state.gui:
+                    state.gui.set_state("idle")
+                return ""
 
         try:
             text = recognizer.recognize_google(audio)
-            print("🗣️ You:", text)
+            print(f"You: {text}")
+            if state.gui:
+                state.gui.set_state("thinking", f"You: {text}")
             return text
         except sr.UnknownValueError:
-            print("Sorry, I didn't catch that. Please try again.")
+            if state.gui:
+                state.gui.set_state("idle")
             return ""
         except sr.RequestError:
-            print("Error with the speech recognition service.")
+            print("Speech recognition service error.")
+            if state.gui:
+                state.gui.set_state("idle")
             return ""
     except Exception as e:
         print(f"Microphone error: {e}")
+        if state.gui:
+            state.gui.set_state("idle")
         return ""

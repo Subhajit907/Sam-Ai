@@ -1,15 +1,19 @@
 """
-Sam AI Assistant - Main Entry Point
-A voice-controlled AI assistant that can create projects, control your computer, and answer questions.
+Alia AI Assistant - Main Entry Point
+A voice-controlled AI assistant with a Jarvis-like GUI.
 """
 
-from modules.voice import speak, listen
+import threading
+from modules import state
+from modules.gui import AliaGUI
+from modules.voice import speak, listen, _calibrate
 from modules.commands import handle_command
 
 
-def main():
-    """Main application loop"""
-    speak("Hello, I am Sam. How can I help you?")
+def voice_loop():
+    """Runs in a background thread — listens and responds continuously."""
+    _calibrate()   # warm up mic before first greeting
+    speak("Hey, I'm Alia. What's up?")
     while True:
         command = listen()
         if command:
@@ -17,4 +21,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Create and register GUI before starting voice loop
+    gui = AliaGUI()
+    state.gui = gui
+
+    # Voice loop runs in background; GUI must own the main thread
+    t = threading.Thread(target=voice_loop, daemon=True)
+    t.start()
+
+    gui.run()   # blocks until window is closed

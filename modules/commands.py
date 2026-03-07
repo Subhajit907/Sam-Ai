@@ -2,12 +2,14 @@
 
 import webbrowser
 import os
+import re
 import subprocess
 import pyautogui
 import time
+import sys
 
 from modules.voice import speak
-from modules.ai import ask_openai
+from modules.ai import ask_openai, reset_conversation
 from modules.projects import (
     create_python_project,
     create_game_project,
@@ -17,6 +19,28 @@ from modules.projects import (
 
 # Track open browser instance
 open_browser = None
+
+# Path to yt-dlp inside the venv
+_YT_DLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
+
+
+def play_youtube_music(query):
+    """Find the top YouTube result for query and open it directly in browser."""
+    speak(f"Finding {query} on YouTube, one second.")
+    try:
+        result = subprocess.run(
+            [_YT_DLP, f"ytsearch1:{query}", "--print", "webpage_url", "--no-download"],
+            capture_output=True, text=True, timeout=15
+        )
+        url = result.stdout.strip()
+        if url.startswith("https://"):
+            webbrowser.open(url)
+            speak(f"Playing {query} on YouTube!")
+        else:
+            speak("Sorry, I couldn't find that song on YouTube.")
+    except Exception as e:
+        speak("Something went wrong while searching YouTube.")
+        print(f"yt-dlp error: {e}")
 
 
 def open_youtube():
@@ -147,8 +171,12 @@ def handle_command(command):
     cmd = command.lower()
 
     if "exit" in cmd or "quit" in cmd or "terminate" in cmd or "stop" in cmd:
-        speak("Goodbye!")
+        speak("Alright, see you later!")
         exit(0)
+
+    elif "reset" in cmd or "forget everything" in cmd or "start over" in cmd:
+        reset_conversation()
+        speak("Sure, fresh start. What's on your mind? I'm Alia, here to help!")
 
     elif "close browser" in cmd or "close this browser" in cmd or "close youtube" in cmd or "close google" in cmd:
         close_browser()
@@ -195,35 +223,39 @@ def handle_command(command):
         subprocess.Popen(["code"])
         speak("Opening VS Code")
 
+    elif "play" in cmd or ("open" in cmd and any(w in cmd for w in ["music", "song", "track"]) and "youtube" in cmd):
+        # Extract the song/artist — strip all filler words
+        query = re.sub(
+            r"\b(play|open|music|song|track|for me|on youtube|in youtube|youtube|please|a|the|some|and|me|i want|to|you|want)\b",
+            " ", cmd, flags=re.IGNORECASE
+        )
+        query = re.sub(r"\s+", " ", query).strip()
+        if not query:
+            speak("Sure! What song or artist would you like me to play?")
+        else:
+            play_youtube_music(query)
+
     elif "google" in cmd and ("search" in cmd or "find" in cmd):
-        # Extract search query
         if "search for" in cmd:
             search_query = cmd.split("search for", 1)[1].strip()
         elif "find" in cmd:
             search_query = cmd.split("find", 1)[1].strip()
         else:
             search_query = cmd.replace("google", "").strip()
-        
-        # Remove extra words
         search_query = search_query.replace("on google", "").replace("google", "").strip()
-        
         if search_query:
             search_google(search_query)
         else:
             open_google()
 
     elif "youtube" in cmd and ("search" in cmd or "find" in cmd):
-        # Extract search query
         if "search for" in cmd:
             search_query = cmd.split("search for", 1)[1].strip()
         elif "find" in cmd:
             search_query = cmd.split("find", 1)[1].strip()
         else:
             search_query = cmd.replace("youtube", "").strip()
-        
-        # Remove extra words
         search_query = search_query.replace("on youtube", "").replace("youtube", "").strip()
-        
         if search_query:
             search_youtube(search_query)
         else:
@@ -236,10 +268,6 @@ def handle_command(command):
         open_youtube()
 
     elif "write" in cmd and "notepad" in cmd:
-        # Extract what to write about - be more careful with extraction
-        # Keep more of the original text and only remove essential keywords
-        import re
-        
         # Try to find the topic after "about" or "write"
         write_request = ""
         
