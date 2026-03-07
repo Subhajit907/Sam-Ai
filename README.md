@@ -1,102 +1,131 @@
-# Sam AI Assistant 🤖
+# Alia AI Assistant
 
-A powerful voice-controlled AI assistant that can create projects, control your computer, search the web, and answer questions using OpenAI's GPT models.
+A voice-controlled AI assistant with a Jarvis-like animated GUI. Alia listens to your voice, speaks back using OpenAI's TTS (nova voice), remembers your conversation, and can control your computer, browse the web, play music, and create projects.
 
-## Features ✨
+## Features
 
-### Voice Control
-- **Speech Recognition** - Understand voice commands
-- **Text-to-Speech** - Respond with natural voice output using Windows SAPI5
-- **Real-time Processing** - Instant command execution
+### Animated GUI
+- Jarvis-style dark UI with rotating rings and state-reactive animations
+- Visual states: Standby, Listening, Speaking, Processing
+- Real-time display of what Alia says and hears
 
-### Project Development
-- **Python Projects** - Auto-generate project structure with src/, tests/, data/ folders
-- **Game Development** - AI-powered game creation using Pygame
-- **Web Projects** - Create HTML/CSS/JS projects with proper structure
-- **Auto-open in VS Code** - Projects open automatically in your editor
+### Voice Interaction
+- **Speech recognition** via Google Speech Recognition
+- **Natural TTS** using OpenAI's `tts-1` model (nova voice)
+- **Interruption detection** — speak over Alia mid-sentence and she stops and listens
+- **Mic auto-calibration** for ambient noise on startup
 
-### System Control
-- **Application Management** - Open Notepad, Calculator, File Explorer, VS Code
-- **Web Browsing** - Open Google, YouTube with custom searches
-- **System Operations** - Lock screen, sleep mode, shutdown, restart
-- **Screenshots** - Capture screen automatically
-- **Text Input** - Type content programmatically
+### Conversation Memory
+- Maintains full conversation history for natural back-and-forth
+- Powered by `gpt-4o-mini` with a warm, conversational system prompt
+- Say "reset" or "start over" to clear history and start fresh
 
-### AI Capabilities
-- **Question Answering** - Ask anything and get intelligent responses
-- **Code Generation** - Generate complete game code automatically
-- **Natural Conversation** - Chat with an intelligent assistant
+### Music Playback
+- "Play [song/artist]" — finds the top YouTube result via `yt-dlp` and opens it in the browser
 
-## Installation 🚀
+### Web Browsing
+- Open Google or YouTube
+- Search Google or YouTube by voice
+- Close browser
+
+### System Control (Windows)
+- Open Notepad, Calculator, File Explorer, Command Prompt, VS Code
+- Lock screen, sleep, shutdown, restart
+- Take a screenshot
+- Type text programmatically
+
+### Project Scaffolding
+- Create Python projects with `src/`, `tests/`, `data/` structure
+- Create Pygame game projects with AI-generated starter code
+- Create HTML/CSS/JS web projects
+- Auto-open generated projects in VS Code
+
+### AI Q&A
+- Ask anything — answers use full conversation context
+
+---
+
+## Installation
 
 ### Prerequisites
 - Python 3.8+
-- Windows OS (for SAPI5 speech synthesis)
-- Microphone for voice input
-- VS Code (optional, for project development)
+- Microphone
+- OpenAI API key (with credits for Chat + TTS)
+- `yt-dlp` installed in your virtual environment
+- macOS: `afplay` (built-in) — no extra setup needed
+- Linux/Windows: `ffplay` from [FFmpeg](https://ffmpeg.org/download.html) must be on PATH
 
 ### Setup
-1. Clone or download this repository:
+
+1. Clone the repository and enter the directory:
 ```bash
+git clone https://github.com/Subhajit907/Sam-Ai.git
 cd Sam-Ai
 ```
 
-2. Create a virtual environment (use `python3` if `python` points to Python 2 on your system):
+2. Create and activate a virtual environment:
 ```bash
 python -m venv .venv
-```
-
-3. Activate the virtual environment (choose the command for your OS/shell):
-- macOS / Linux (bash, zsh):
-```bash
+# macOS / Linux
 source .venv/bin/activate
-```
-- Windows PowerShell:
-```powershell
+# Windows PowerShell
 .venv\Scripts\Activate.ps1
 ```
-- Windows CMD:
-```cmd
-.venv\Scripts\activate.bat
+
+3. Install system dependencies for audio (Linux only):
+```bash
+# Debian / Ubuntu
+sudo apt install -y portaudio19-dev
+# Fedora
+sudo dnf install -y portaudio-devel
 ```
 
-4. Install system dependencies (required for audio libraries) — platform-specific:
-- macOS (Homebrew):
-```bash
-brew install portaudio
-```
-- Debian/Ubuntu:
-```bash
-sudo apt update
-sudo apt install -y portaudio19-dev libsndfile1 libsndfile1-dev build-essential
-```
-- Fedora:
-```bash
-sudo dnf install -y portaudio-devel libsndfile
-```
-Note: These packages are required for `sounddevice`, `soundfile` or `pyaudio` to build/install correctly.
-
-5. Install Python dependencies:
+4. Install Python dependencies:
 ```bash
 pip install -r requirements.txt
+pip install yt-dlp
 ```
 
-6. Set up your OpenAI API key:
-   - Create a `.env` file in the project root
-   - Add your API key:
-   ```
-   OPENAI_API_KEY=your_api_key_here
-   ```
-   - Get your key from [OpenAI Platform](https://platform.openai.com)
+5. Create a `.env` file in the project root:
+```
+OPENAI_API_KEY=your_api_key_here
+```
+Get your key from [platform.openai.com](https://platform.openai.com).
 
-7. Run Sam:
+6. Run Alia:
 ```bash
 python sam.py
 ```
 
-## Usage 📋
+---
 
-Once running, Sam is always listening. Here are example commands:
+## Voice Commands
+
+### Music
+```
+"Play Blinding Lights"
+"Play Arijit Singh"
+"Play lo-fi music"
+```
+
+### Web Browsing
+```
+"Search for Python tutorials on Google"
+"Find Coldplay on YouTube"
+"Open YouTube"
+"Close browser"
+```
+
+### System (Windows)
+```
+"Open VS Code"
+"Open Notepad"
+"Take a screenshot"
+"Lock screen"
+"Sleep"
+"Shutdown"
+"Restart"
+```
 
 ### Project Creation
 ```
@@ -105,127 +134,72 @@ Once running, Sam is always listening. Here are example commands:
 "Create web project portfolio"
 ```
 
-### Web Browsing
+### Conversation
 ```
-"Search for Python on Google"
-"Find Arijit Singh on YouTube"
-```
-
-### System Control
-```
-"Open VS Code"
-"Open Notepad"
-"Take a screenshot"
-"Lock screen"
-"Sleep"
-"Shutdown"
-```
-
-### General Queries
-```
-"Who is Alia Bhatt?"
-"What is machine learning?"
+"Who is Nikola Tesla?"
+"Explain machine learning in simple terms"
 "Tell me a joke"
+"Reset" / "Start over" / "Forget everything"
 ```
 
 ### Exit
 ```
-"Exit" / "Quit" / "Terminate" / "Stop"
+"Exit" / "Quit" / "Stop" / "Terminate"
 ```
-
-## Project Structure 📁
-
-```
-Sam-Ai/
-├── sam.py                    # Main entry point
-├── requirements.txt          # Project dependencies
-├── README.md                 # This file
-├── .env                      # API keys (not included in repo)
-├── sam_old.py               # Backup of original code
-└── modules/
-    ├── __init__.py
-    ├── voice.py             # Speech recognition & synthesis
-    ├── ai.py                # OpenAI API interactions
-    ├── projects.py          # Project creation functions
-    └── commands.py          # Command processing & handling
-```
-
-## Module Documentation 📚
-
-### voice.py
-- `speak(text)` - Convert text to speech
-- `listen()` - Listen for voice commands
-
-### ai.py
-- `ask_openai(prompt)` - Send prompt to OpenAI
-- `generate_game_code(project_name, game_type)` - Generate game code
-
-### projects.py
-- `create_python_project(project_name)` - Create Python project
-- `create_game_project(project_name, game_type)` - Create game project
-- `create_web_project(project_name)` - Create web project
-- `open_vscode_project(project_path)` - Open project in VS Code
-
-### commands.py
-- `handle_command(command)` - Process voice commands
-
-## System Requirements 💻
-
-- **OS**: Windows (SAPI5 for speech synthesis)
-- **Python**: 3.8 or higher
-- **RAM**: 2GB minimum
-- **Microphone**: Required for voice input
-- **Internet**: Required for OpenAI API and web searches
-
-## Dependencies 📦
-
-- `openai` - OpenAI API client
-- `speech-recognition` - Speech recognition
-- `pyttsx3` - Text-to-speech fallback
-- `sounddevice` - Audio input
-- `soundfile` - Audio file handling
-- `pyautogui` - Keyboard/mouse automation
-- `python-dotenv` - Environment variable management
-
-## Troubleshooting 🔧
-
-### No Voice Output
-- Ensure Windows speakers are enabled
-- Check volume level
-- Verify SAPI5 installation
-
-### Microphone Not Detected
-- Check microphone connection
-- Run: `python -m speech_recognition`
-- Ensure microphone is set as default input
-
-### OpenAI API Errors
-- Verify API key in `.env` file
-- Check internet connection
-- Ensure account has API credits
-
-### VS Code Not Opening
-- Install VS Code: https://code.visualstudio.com
-- Add VS Code to PATH
-- Run: `code .` from terminal to verify installation
-
-## Contributing 🤝
-
-Feel free to fork, modify, and improve Sam! Some ideas:
-- Add email integration
-- Support for more project types
-- Database management
-- File operations
-- Custom voice profiles
-
-## License 📄
-
-This project is open source and available under the MIT License.
-
-## Author 👨‍💻
-
-Created with ❤️ for automation and AI enthusiasts.
 
 ---
 
-**Last Updated**: January 2026
+## Project Structure
+
+```
+Sam-Ai/
+├── sam.py              # Entry point — starts GUI + voice loop thread
+├── requirements.txt    # Python dependencies
+├── .env                # API keys (not committed)
+└── modules/
+    ├── ai.py           # OpenAI chat (gpt-4o-mini) with conversation history
+    ├── voice.py        # OpenAI TTS, speech recognition, interruption detection
+    ├── gui.py          # Jarvis-like animated tkinter GUI
+    ├── state.py        # Shared state (GUI reference)
+    ├── commands.py     # Voice command routing and execution
+    └── projects.py     # Python / game / web project scaffolding
+```
+
+---
+
+## Dependencies
+
+| Package | Purpose |
+|---|---|
+| `openai` | GPT-4o-mini chat + TTS-1 speech synthesis |
+| `SpeechRecognition` | Microphone input and Google STT |
+| `pyautogui` | Keyboard/mouse automation, screenshots |
+| `python-dotenv` | Load `.env` API keys |
+| `yt-dlp` | Resolve YouTube URLs for music playback |
+| `tkinter` | GUI (Python built-in) |
+
+---
+
+## Troubleshooting
+
+**No voice output**
+- Verify your OpenAI API key has TTS access and available credits
+- macOS: ensure `afplay` works — run `afplay /System/Library/Sounds/Ping.aiff` in terminal
+- Linux/Windows: install FFmpeg and confirm `ffplay` is on PATH
+
+**Microphone not detected**
+- Check your mic is connected and set as default input
+- Run `python -m speech_recognition` to test
+
+**yt-dlp not found**
+- Install it inside your venv: `pip install yt-dlp`
+
+**OpenAI API errors**
+- Confirm `.env` has the correct `OPENAI_API_KEY`
+- Check your account has API credits at [platform.openai.com](https://platform.openai.com)
+
+---
+
+## License
+
+MIT License — open source and free to use.
