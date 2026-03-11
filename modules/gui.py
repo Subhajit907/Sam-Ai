@@ -2,6 +2,7 @@
 
 import tkinter as tk
 import math
+import threading
 
 # Color palette
 BG       = "#04040f"
@@ -27,6 +28,8 @@ class AliaGUI:
         self.pulse  = 0.0
         self.pulse_dir = 1
         self._last_text = ""
+        self._video_active = False
+        self._video_win = None
 
         self._build_ui()
         self._animate()
@@ -65,7 +68,20 @@ class AliaGUI:
         self.text_var = tk.StringVar(value="Say something to Alia...")
         tk.Label(self.root, textvariable=self.text_var,
                  font=("Courier", 10), fg=WHITE, bg=BG,
-                 wraplength=740, justify="center").pack(pady=(0, 10))
+                 wraplength=740, justify="center").pack(pady=(0, 6))
+
+        # ── Button bar ────────────────────────────────────────────────────
+        btn_frame = tk.Frame(self.root, bg=BG)
+        btn_frame.pack(pady=(0, 12))
+
+        self._video_btn = tk.Button(
+            btn_frame, text="[ VIDEO ]",
+            font=("Courier", 10, "bold"),
+            fg=GLOW, bg=BG, activebackground=DIM,
+            activeforeground=BRIGHT, relief="flat", bd=0,
+            cursor="hand2", command=self._toggle_video,
+        )
+        self._video_btn.pack(side="left", padx=20)
 
     # ------------------------------------------------------------------ #
     #  Drawing
@@ -206,7 +222,7 @@ class AliaGUI:
                 "speaking":  "SPEAKING",
                 "thinking":  "PROCESSING ...",
             }
-            self.status_var.set(labels.get(state, state.upper()))
+            self.status_var.set(labels.get(state) or state.upper())
             if text:
                 self._last_text = text
                 self.text_var.set(text)
@@ -214,6 +230,69 @@ class AliaGUI:
 
     def show_text(self, text):
         self.root.after(0, lambda: self.text_var.set(text))
+
+    # ------------------------------------------------------------------ #
+    #  Video / Camera
+    # ------------------------------------------------------------------ #
+    def _toggle_video(self):
+        if self._video_active:
+            self._stop_video()
+        else:
+            self._start_video()
+
+    def _start_video(self):
+        from modules import vision
+        try:
+            vision.start_camera()
+        except RuntimeError as e:
+            self.show_text(str(e))
+            return
+
+        self._video_active = True
+        self._video_btn.config(fg=BRIGHT, text="[ VIDEO ON ]")
+        self.set_state("idle", "Camera is on — show me something and ask!")
+
+        # Floating preview window
+        self._video_win = tk.Toplevel(self.root)
+        self._video_win.title("Alia — Camera")
+        self._video_win.configure(bg=BG)
+        self._video_win.resizable(False, False)
+        self._video_win.protocol("WM_DELETE_WINDOW", self._stop_video)
+
+        tk.Label(self._video_win, text="CAMERA FEED",
+                 font=("Courier", 8), fg=TEXT_DIM, bg=BG).pack(pady=(8, 2))
+        self._video_label = tk.Label(self._video_win, bg=BG)
+        self._video_label.pack(padx=10, pady=(0, 10))
+
+        self._refresh_video_frame()
+
+    def _refresh_video_frame(self):
+        if not self._video_active:
+            return
+        from modules import vision
+        try:
+            from PIL import Image, ImageTk
+            import cv2
+            frame = vision.get_frame()
+            if frame is not None:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(frame_rgb).resize((400, 300))
+                photo = ImageTk.PhotoImage(img)
+                self._video_label.config(image=photo)
+                self._video_label.image = photo  # type: ignore[attr-defined]  # keep reference
+        except Exception:
+            pass
+        self.root.after(66, self._refresh_video_frame)  # ~15 fps
+
+    def _stop_video(self):
+        from modules import vision
+        self._video_active = False
+        vision.stop_camera()
+        self._video_btn.config(fg=GLOW, text="[ VIDEO ]")
+        self.set_state("idle", "Camera off.")
+        if self._video_win:
+            self._video_win.destroy()
+            self._video_win = None
 
     def run(self):
         self.root.mainloop()

@@ -135,3 +135,7 @@ Thumbs.db
 
 # Project specific
 *.env.local
+
+# Google OAuth credentials — never commit these
+credentials.json
+google_token.pkl

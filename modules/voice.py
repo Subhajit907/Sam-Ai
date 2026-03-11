@@ -18,9 +18,9 @@ from modules import state
 # Recognizer — calibrated once at startup, not on every call
 recognizer = sr.Recognizer()
 recognizer.dynamic_energy_threshold = True
-recognizer.pause_threshold = 1.2       # wait 1.2s of silence before ending phrase
+recognizer.pause_threshold = 2.0       # wait 2s of silence before ending phrase
 recognizer.phrase_threshold = 0.3
-recognizer.non_speaking_duration = 0.4
+recognizer.non_speaking_duration = 0.8
 
 _calibrated = False
 
@@ -68,19 +68,19 @@ def speak(text):
             )
 
         # Watch mic in parallel — if user speaks, kill playback
-        captured = [None]
+        captured: list = [None]
 
         def watch_for_interruption():
             watcher = sr.Recognizer()
             watcher.energy_threshold = recognizer.energy_threshold * 1.5
             watcher.dynamic_energy_threshold = False
-            watcher.pause_threshold = 1.2
+            watcher.pause_threshold = 2.0
             try:
                 with sr.Microphone() as source:
                     while process.poll() is None:   # while audio still playing
                         try:
-                            audio = watcher.listen(source, timeout=0.4, phrase_time_limit=20)
-                            # User spoke — cut Alia off
+                            audio = watcher.listen(source, timeout=0.4, phrase_time_limit=30)
+                            # User spoke — cut Alia off and keep recording until silence
                             process.kill()
                             captured[0] = audio
                             break
@@ -114,6 +114,24 @@ def speak(text):
         state.gui.set_state("idle")
 
 
+def _listen_continuation():
+    """Listen for a brief moment to catch words spoken after Alia was cut off."""
+    cont_recognizer = sr.Recognizer()
+    cont_recognizer.energy_threshold = recognizer.energy_threshold
+    cont_recognizer.dynamic_energy_threshold = False
+    cont_recognizer.pause_threshold = 2.0
+    cont_recognizer.non_speaking_duration = 0.8
+    try:
+        with sr.Microphone() as source:
+            try:
+                audio = cont_recognizer.listen(source, timeout=1.5, phrase_time_limit=30)
+                return cont_recognizer.recognize_google(audio)  # type: ignore[attr-defined]
+            except (sr.WaitTimeoutError, sr.UnknownValueError):
+                return ""
+    except Exception:
+        return ""
+
+
 def listen():
     """Listen for voice input. Uses interrupted audio first if available."""
     global _interrupted_audio
@@ -123,15 +141,21 @@ def listen():
         audio = _interrupted_audio
         _interrupted_audio = None
         try:
-            text = recognizer.recognize_google(audio)
+            text = recognizer.recognize_google(audio)  # type: ignore[attr-defined]
+        except (sr.UnknownValueError, Exception):
+            text = ""
+
+        # After Alia is cut off, user may still be speaking — grab the continuation
+        continuation = _listen_continuation()
+        if continuation:
+            text = (text + " " + continuation).strip() if text else continuation
+
+        if text:
             print(f"You: {text}")
             if state.gui:
                 state.gui.set_state("thinking", f"You: {text}")
             return text
-        except sr.UnknownValueError:
-            pass  # fall through to normal listen
-        except Exception:
-            pass
+        # fall through to normal listen if nothing was captured
 
     if state.gui:
         state.gui.set_state("listening", "Listening...")

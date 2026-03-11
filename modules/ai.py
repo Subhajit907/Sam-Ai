@@ -26,30 +26,46 @@ Rules:
 - If you don't know something, say so naturally
 - Never sound robotic or formal"""
 
-# Conversation history for natural back-and-forth
-_conversation_history = [{"role": "system", "content": SYSTEM_PROMPT}]
 MAX_HISTORY = 20  # keep last 20 messages to avoid token bloat
+
+# Conversation history — seeded from persistent DB on first use
+_conversation_history = None
+
+
+def _get_history():
+    global _conversation_history
+    if _conversation_history is None:
+        from modules.memory import init_db, load_recent_chat
+        init_db()
+        past = load_recent_chat(MAX_HISTORY)
+        _conversation_history = [{"role": "system", "content": SYSTEM_PROMPT}] + past
+        if past:
+            print(f"[Memory] Restored {len(past)} messages from previous sessions.")
+    return _conversation_history
 
 
 def ask_openai(prompt):
     """Send a prompt to OpenAI and get a response, maintaining conversation history."""
-    global _conversation_history
+    from modules.memory import save_chat
+    history = _get_history()
 
-    _conversation_history.append({"role": "user", "content": prompt})
+    history.append({"role": "user", "content": prompt})
+    save_chat("user", prompt)
 
     # Trim history if too long (keep system prompt + last MAX_HISTORY messages)
-    if len(_conversation_history) > MAX_HISTORY + 1:
-        _conversation_history = [_conversation_history[0]] + _conversation_history[-(MAX_HISTORY):]
+    if len(history) > MAX_HISTORY + 1:
+        history[:] = [history[0]] + history[-(MAX_HISTORY):]
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",   # faster and cheaper than gpt-3.5-turbo, better quality
-            messages=_conversation_history,
-            temperature=0.85,       # more natural, varied responses
-            max_tokens=300,         # keep spoken replies concise
+            model="gpt-4o-mini",
+            messages=history,  # type: ignore[arg-type]
+            temperature=0.85,
+            max_tokens=300,
         )
-        reply = response.choices[0].message.content
-        _conversation_history.append({"role": "assistant", "content": reply})
+        reply = response.choices[0].message.content or ""
+        history.append({"role": "assistant", "content": reply})
+        save_chat("assistant", reply)
         return reply
     except Exception as e:
         print(f"Error communicating with OpenAI: {e}")
@@ -85,8 +101,8 @@ def generate_game_code(project_name, game_type):
             ]
         )
         
-        game_code = response.choices[0].message.content
-        
+        game_code = response.choices[0].message.content or ""
+
         # Clean up code if it has markdown markers
         if "```python" in game_code:
             game_code = game_code.split("```python")[1].split("```")[0]

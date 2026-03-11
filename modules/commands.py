@@ -166,20 +166,223 @@ def write_to_notepad(content):
         speak(f"Error writing to Notepad: {e}")
 
 
+# ── Lead management handlers ──────────────────────────────────────────────────
+
+def _handle_send_all_leads():
+    """Read all pending leads from Google Sheet and send personalised emails."""
+    from modules import sheets, gmail_integration
+    speak("Let me check the leads in your sheet.")
+    try:
+        leads = sheets.get_pending_leads()
+    except Exception as e:
+        speak(f"I couldn't connect to your Google Sheet. {e}")
+        return
+
+    if not leads:
+        speak("There are no pending leads right now. Everyone has already been contacted.")
+        return
+
+    speak(f"I found {len(leads)} pending lead{'s' if len(leads) != 1 else ''}. "
+          f"Should I go ahead and send personalised emails to all of them?")
+
+    # Wait for confirmation
+    from modules.voice import listen
+    confirm = listen().lower()
+    if not any(w in confirm for w in ("yes", "yeah", "go ahead", "sure", "do it", "send")):
+        speak("Okay, I'll hold off for now.")
+        return
+
+    sent_count = 0
+    failed = []
+    for lead in leads:
+        speak(f"Writing email for {lead['name']}…")
+        try:
+            subject, _ = gmail_integration.send_to_lead(lead)
+            sheets.mark_email_sent(lead["row"])
+            speak(f"Email sent to {lead['name']} at {lead['company'] or lead['email']}.")
+            sent_count += 1
+        except Exception as e:
+            print(f"Failed to email {lead['name']}: {e}")
+            failed.append(lead["name"])
+
+    summary = f"Done! I sent {sent_count} email{'s' if sent_count != 1 else ''}."
+    if failed:
+        summary += f" I couldn't reach: {', '.join(failed)}."
+    speak(summary)
+
+
+def _handle_send_single_lead(name_hint: str):
+    """Send email to a specific lead matched by name."""
+    from modules import sheets, gmail_integration
+    try:
+        leads = sheets.get_pending_leads()
+    except Exception as e:
+        speak(f"I couldn't connect to your Google Sheet. {e}")
+        return
+
+    if not leads:
+        speak("No pending leads found in your sheet.")
+        return
+
+    # Match by name (case-insensitive partial match)
+    matched = [l for l in leads if name_hint and name_hint.lower() in l["name"].lower()]
+    if not matched:
+        speak(f"I couldn't find a pending lead named {name_hint}. "
+              f"Available: {', '.join(l['name'] for l in leads[:5])}.")
+        return
+
+    lead = matched[0]
+    speak(f"Sending personalised email to {lead['name']} at "
+          f"{lead['company'] or lead['email']}.")
+    try:
+        subject, _ = gmail_integration.send_to_lead(lead)
+        sheets.mark_email_sent(lead["row"])
+        speak(f"Done! Email sent to {lead['name']} with subject: {subject}")
+    except Exception as e:
+        speak(f"Something went wrong while emailing {lead['name']}. {e}")
+
+
+def _handle_check_replies():
+    """Check which sent leads have replied and update the sheet."""
+    from modules import sheets, gmail_integration
+    speak("Checking your inbox for replies from leads. Give me a moment.")
+    try:
+        sent_leads = sheets.get_sent_leads()
+    except Exception as e:
+        speak(f"I couldn't access your sheet. {e}")
+        return
+
+    if not sent_leads:
+        speak("No sent leads to check — either no emails have gone out yet, "
+              "or everyone has already been marked.")
+        return
+
+    try:
+        results = gmail_integration.check_all_replies(sent_leads)
+    except Exception as e:
+        speak(f"I had trouble checking your inbox. {e}")
+        return
+
+    replied     = []
+    no_reply    = []
+    lead_by_email = {l["email"]: l for l in sent_leads}
+
+    for email, has_replied in results.items():
+        lead = lead_by_email[email]
+        sheets.update_reply_status(lead["row"], has_replied)
+        if has_replied:
+            replied.append(lead["name"])
+        else:
+            no_reply.append(lead["name"])
+
+    if replied:
+        speak(f"Great news! These leads replied: {', '.join(replied)}.")
+    if no_reply:
+        speak(f"No reply yet from: {', '.join(no_reply)}.")
+    if not replied and not no_reply:
+        speak("I checked but couldn't find any updates.")
+
+
+def _handle_lead_summary():
+    """Read out a quick summary of the lead sheet."""
+    from modules import sheets
+    speak("Pulling up your lead summary.")
+    try:
+        s = sheets.get_all_leads_summary()
+    except Exception as e:
+        speak(f"Couldn't read the sheet. {e}")
+        return
+
+    speak(
+        f"You have {s['total']} total leads. "
+        f"{s['pending']} pending, "
+        f"{s['sent']} emails sent, "
+        f"{s['replied']} replied, "
+        f"and {s['no reply']} with no reply yet."
+    )
+
+
+def _handle_send_followup():
+    """Send follow-up emails to leads who were emailed but haven't replied."""
+    from modules import sheets, gmail_integration
+    speak("Checking for leads that need a follow-up.")
+    try:
+        sent_leads = sheets.get_sent_leads()
+    except Exception as e:
+        speak(f"Couldn't access your sheet. {e}")
+        return
+
+    if not sent_leads:
+        speak("No leads need a follow-up right now.")
+        return
+
+    speak(f"I found {len(sent_leads)} lead{'s' if len(sent_leads) != 1 else ''} "
+          f"with no reply. Should I send them a follow-up email?")
+
+    from modules.voice import listen
+    confirm = listen().lower()
+    if not any(w in confirm for w in ("yes", "yeah", "go ahead", "sure", "do it", "send")):
+        speak("Okay, I'll skip for now.")
+        return
+
+    sent_count = 0
+    for lead in sent_leads:
+        # Reuse the same generator — GPT will produce a fresh, shorter follow-up
+        lead["notes"] = (lead.get("notes", "") + " (This is a follow-up email. "
+                         "Keep it shorter and more casual than the first email.)").strip()
+        speak(f"Sending follow-up to {lead['name']}…")
+        try:
+            gmail_integration.send_to_lead(lead)
+            sheets.mark_follow_up(lead["row"])
+            sent_count += 1
+        except Exception as e:
+            print(f"Follow-up failed for {lead['name']}: {e}")
+
+    speak(f"Sent {sent_count} follow-up email{'s' if sent_count != 1 else ''}.")
+
+
 def handle_command(command):
     """Process and execute voice commands"""
     cmd = command.lower()
 
-    if "exit" in cmd or "quit" in cmd or "terminate" in cmd or "stop" in cmd:
+    _camera_words = ("camera", "video")
+    if ("exit" in cmd or "quit" in cmd or "terminate" in cmd
+            or ("stop" in cmd and not any(w in cmd for w in _camera_words))):
         speak("Alright, see you later!")
-        exit(0)
+        from modules import vision
+        vision.stop_camera()
+        os._exit(0)
 
     elif "reset" in cmd or "forget everything" in cmd or "start over" in cmd:
         reset_conversation()
         speak("Sure, fresh start. What's on your mind? I'm Alia, here to help!")
 
+    elif "how much do you remember" in cmd or "memory stats" in cmd or "what have you saved" in cmd:
+        from modules.memory import stats
+        s = stats()
+        speak(f"I've stored {s['chat_messages']} chat messages and {s['vision_interactions']} visual memories so far.")
+
     elif "close browser" in cmd or "close this browser" in cmd or "close youtube" in cmd or "close google" in cmd:
         close_browser()
+
+    elif any(p in cmd for p in ("open camera", "turn on camera", "start camera", "enable camera",
+                                 "open video", "turn on video", "start video")):
+        from modules import state, vision
+        if state.gui:
+            state.gui.root.after(0, state.gui._start_video)
+            speak("Camera is on. Show me something and ask!")
+        else:
+            speak("No GUI available to start the camera.")
+
+    elif any(p in cmd for p in ("close camera", "turn off camera", "stop camera", "disable camera",
+                                  "close video", "turn off video", "stop video")):
+        from modules import state, vision
+        if state.gui:
+            state.gui.root.after(0, state.gui._stop_video)
+            speak("Camera off.")
+        else:
+            vision.stop_camera()
+            speak("Camera stopped.")
 
     elif "create python project" in cmd:
         # Extract project name
@@ -363,6 +566,56 @@ def handle_command(command):
         speak("Restarting in 5 seconds")
         os.system("shutdown /r /t 5")
 
+    # ── Lead / Gmail / Sheets commands ───────────────────────────────────────
+    elif any(p in cmd for p in ("send emails to leads", "send emails to all leads",
+                                 "email all leads", "email the leads")):
+        _handle_send_all_leads()
+
+    elif any(p in cmd for p in ("send email to lead", "email lead", "send email to")):
+        # "send email to Rahul" or "email lead Priya"
+        name_hint = (
+            cmd.replace("send email to lead", "")
+               .replace("send email to", "")
+               .replace("email lead", "")
+               .strip()
+        )
+        _handle_send_single_lead(name_hint)
+
+    elif any(p in cmd for p in ("check replies", "check for replies",
+                                 "who replied", "any replies", "check lead replies")):
+        _handle_check_replies()
+
+    elif any(p in cmd for p in ("lead summary", "how many leads", "lead status",
+                                 "show leads", "leads report")):
+        _handle_lead_summary()
+
+    elif any(p in cmd for p in ("send follow-up", "send followup", "follow up leads",
+                                 "follow up emails", "followup emails")):
+        _handle_send_followup()
+
     else:
-        reply = ask_openai(command)
-        speak(reply)
+        from modules import vision
+        from modules import state
+
+        # If the camera is on, only use vision for visual queries
+        _VISUAL_TRIGGERS = (
+            "what is this", "what's this", "whats this",
+            "what am i holding", "what is in my hand", "what's in my hand",
+            "whats in my hand", "holding on my hand", "holding now",
+            "what are you seeing", "what do you see", "can you see",
+            "look at", "identify this", "recognize this", "recognise this",
+            "describe this", "show you", "what is it", "what is that",
+            "what i am holding", "what i'm holding",
+        )
+        is_visual_query = vision._running and any(t in cmd for t in _VISUAL_TRIGGERS)
+
+        if is_visual_query:
+            if state.gui:
+                state.gui.set_state("thinking")
+            answer = vision.identify_object(command)
+            if state.gui:
+                state.gui.set_state("speaking", answer)
+            speak(answer)
+        else:
+            reply = ask_openai(command)
+            speak(reply)
