@@ -396,354 +396,405 @@ class AliaGUI:
             return
 
         W, H   = 820, 400
-        cx, cy = 410, 175   # moved up for long hair
-        fw, fh = 78, 112    # slimmer, taller oval = feminine
-        ey     = cy - 28    # eyes higher
-        erx, ery = 28, 16   # large almond eyes
-        ny     = cy + 22
-        my     = cy + 62
-        mw     = 32
+        cx, cy = 410, 186   # face centre
+        fw, fh = 78, 118    # face half-width / half-height
+        ey     = cy - 34    # eye row y
+        erx, ery = 27, 15   # eye radii
+        ny     = cy + 22    # nose tip y
+        my     = cy + 62    # mouth centre y
+        mw     = 30         # mouth half-width
         bp     = self._blink_progress
         p      = self.pulse
 
         HAIR_DARK   = (1, 8, 22)
-        HAIR_MID    = (0, 16, 44)
-        HAIR_EDGE   = (0, 28, 62)
-        HAIR_STRAND = (0, 65, 132)
-        HAIR_HI     = (0, 95, 178)
+        HAIR_MID    = (0, 18, 46)
+        HAIR_EDGE   = (0, 32, 72)
+        HAIR_STRAND = (0, 68, 138)
+        HAIR_HI     = (0, 98, 185)
 
-        # ── Glow pass 1: wide atmospheric bloom ──────────────────────────
+        # Realistic skull polygon (matches the reference head silhouette)
+        head_pts = [
+            (cx,       cy - fh - 4),
+            (cx + 42,  cy - fh + 2),
+            (cx + fw - 6, cy - fh + 28),
+            (cx + fw + 6, cy - fh + 64),
+            (cx + fw + 10, cy - 26),        # cheekbone — widest
+            (cx + fw + 4,  cy + 18),
+            (cx + fw - 14, cy + 58),
+            (cx + fw - 36, cy + fh - 6),
+            (cx + 22,  cy + fh + 6),
+            (cx,       cy + fh + 10),
+            (cx - 22,  cy + fh + 6),
+            (cx - fw + 36, cy + fh - 6),
+            (cx - fw + 14, cy + 58),
+            (cx - fw - 4,  cy + 18),
+            (cx - fw - 10, cy - 26),        # cheekbone — widest
+            (cx - fw - 6,  cy - fh + 64),
+            (cx - fw + 6,  cy - fh + 28),
+            (cx - 42,  cy - fh + 2),
+        ]
+
+        # ── 1. Wide atmospheric bloom ─────────────────────────────────────
         gl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         gd = ImageDraw.Draw(gl)
-
-        for off, alp in [(75, 10), (55, 20), (32, 40), (14, 68)]:
-            r = fw + off
-            gd.ellipse([cx - int(r * 1.12), cy - r, cx + int(r * 1.12), cy + r],
-                       fill=(0, 160, 240, alp))
-
-        # Long hair glow column
+        for off, alp in [(96, 6), (72, 15), (46, 32), (22, 58)]:
+            gd.ellipse([cx-fw-off, cy-fh-int(off*0.7),
+                        cx+fw+off, cy+fh+int(off*0.7)],
+                       fill=(0, 138, 228, alp))
         gd.polygon([
-            (cx - fw - 125, cy - fh),
-            (cx + fw + 125, cy - fh),
-            (cx + fw + 85,  H),
-            (cx - fw - 85,  H),
-        ], fill=(0, 55, 128, 14))
-
-        for rr in (112, 138, 162):
-            gd.ellipse([cx-rr, cy-rr, cx+rr, cy+rr],
-                       outline=(0, 100, 200, 40), width=4)
-
-        for ex in (cx - 34, cx + 34):
-            gd.ellipse([ex-32, ey-22, ex+32, ey+22], fill=(0, 180, 255, 85))
-
+            (cx-fw-136, cy-fh-24), (cx+fw+136, cy-fh-24),
+            (cx+fw+98,  H),        (cx-fw-98,  H),
+        ], fill=(0, 44, 110, 11))
+        for ex in (cx-36, cx+36):
+            gd.ellipse([ex-40, ey-30, ex+40, ey+30], fill=(0, 150, 255, 65))
         if self.state == "speaking":
             oh = max(2, int(3 + self._lip_sync_amp * 24))
-            gd.ellipse([cx-mw-10, my-oh-10, cx+mw+10, my+oh+10],
-                       fill=(0, 150, 255, 68))
+            gd.ellipse([cx-mw-16, my-oh-16, cx+mw+16, my+oh+16],
+                       fill=(0, 132, 255, 52))
+        gl = gl.filter(ImageFilter.GaussianBlur(radius=26))
 
-        gl = gl.filter(ImageFilter.GaussianBlur(radius=20))
-
-        # ── Compose base image ────────────────────────────────────────────
         img = Image.new("RGBA", (W, H), (4, 4, 15, 255))
         img.alpha_composite(gl)
         d = ImageDraw.Draw(img)
 
-        # Grid
+        # Background grid
         for x in range(0, W, 40):
             d.line([(x, 0), (x, H)], fill=(10, 10, 26))
         for y in range(0, H, 40):
             d.line([(0, y), (W, y)], fill=(10, 10, 26))
 
-        # ── HUD rings ────────────────────────────────────────────────────
-        ring_defs = [
-            (164, 8,  (0, 26,  64), 1),
-            (144, 6,  (0, 61, 128), 2),
-            (120, 5,  (0, 80, 170), 2),
-            (96,  4,  (0,140, 220), 2),
-        ]
-        for rr, segs, col, ww in ring_defs:
+        # ── 2. Long puffy hair ────────────────────────────────────────────
+        d.polygon([
+            (cx-50,  cy-fh-18),
+            (cx-fw-46, cy-fh+4),  (cx-fw-110, cy-fh+50),
+            (cx-fw-136, cy-16),   (cx-fw-130, cy+58),
+            (cx-fw-116, cy+136),  (cx-fw-96,  cy+210),
+            (cx-fw-74,  cy+282),  (cx-fw-48,  394),
+            (cx-fw+6,   400),     (cx-20, 400),
+            (cx-14, cy+fh+56),    (cx-fw+18, cy+fh+20),
+        ], fill=HAIR_DARK, outline=HAIR_EDGE)
+        d.polygon([
+            (cx+50,  cy-fh-18),
+            (cx+fw+46, cy-fh+4),  (cx+fw+110, cy-fh+50),
+            (cx+fw+136, cy-16),   (cx+fw+130, cy+58),
+            (cx+fw+116, cy+136),  (cx+fw+96,  cy+210),
+            (cx+fw+74,  cy+282),  (cx+fw+48,  394),
+            (cx+fw-6,   400),     (cx+20, 400),
+            (cx+14, cy+fh+56),    (cx+fw-18, cy+fh+20),
+        ], fill=HAIR_DARK, outline=HAIR_EDGE)
+        d.pieslice([cx-fw-26, cy-fh-80, cx+fw+26, cy-fh+30],
+                   start=0, end=180, fill=HAIR_DARK, outline=HAIR_EDGE)
+        d.polygon([
+            (cx-44, cy-fh-12),   (cx-fw-28, cy-fh+18),
+            (cx-fw-80, cy-fh+64),(cx-fw-100, cy+8),
+            (cx-fw-92, cy+88),   (cx-fw-78, cy+164),
+            (cx-fw-60, cy+246),  (cx-fw-36, 390),
+            (cx-20, 400),        (cx-14, cy+fh+56),
+            (cx-fw+16, cy+fh+18),
+        ], fill=HAIR_MID, outline=HAIR_STRAND)
+        d.polygon([
+            (cx+44, cy-fh-12),   (cx+fw+28, cy-fh+18),
+            (cx+fw+80, cy-fh+64),(cx+fw+100, cy+8),
+            (cx+fw+92, cy+88),   (cx+fw+78, cy+164),
+            (cx+fw+60, cy+246),  (cx+fw+36, 390),
+            (cx+20, 400),        (cx+14, cy+fh+56),
+            (cx+fw-16, cy+fh+18),
+        ], fill=HAIR_MID, outline=HAIR_STRAND)
+        for bx_off, bl in [(-50,2),(-34,6),(-18,10),(0,12),(18,10),(34,6),(50,2)]:
+            d.arc([cx+bx_off-22, cy-fh-6+bl, cx+bx_off+22, cy-fh+24+bl],
+                  start=195, end=345, fill=HAIR_MID, width=3)
+        for sx,sy,ex2,ey2,ex3,ey3 in [
+            (cx-62,cy-fh+8, cx-fw-40,cy+fh+14, cx-fw-66,cy+224),
+            (cx-50,cy-fh+3, cx-fw-26,cy+fh,    cx-fw-52,cy+208),
+            (cx-40,cy-fh-2, cx-fw-12,cy+fh-10, cx-fw-32,cy+184),
+            (cx-76,cy-fh+16,cx-fw-58,cy+116,   cx-fw-88,cy+282),
+        ]:
+            d.line([(sx,sy),(ex2,ey2),(ex3,ey3)], fill=HAIR_HI, width=1)
+        for sx,sy,ex2,ey2,ex3,ey3 in [
+            (cx+62,cy-fh+8, cx+fw+40,cy+fh+14, cx+fw+66,cy+224),
+            (cx+50,cy-fh+3, cx+fw+26,cy+fh,    cx+fw+52,cy+208),
+            (cx+40,cy-fh-2, cx+fw+12,cy+fh-10, cx+fw+32,cy+184),
+            (cx+76,cy-fh+16,cx+fw+58,cy+116,   cx+fw+88,cy+282),
+        ]:
+            d.line([(sx,sy),(ex2,ey2),(ex3,ey3)], fill=HAIR_HI, width=1)
+
+        # ── 3. Neck / shoulders ───────────────────────────────────────────
+        nk_top = cy + fh - 8
+        nk_bot = cy + fh + 56
+        d.rectangle([cx-20, nk_top, cx+20, nk_bot], fill=(1,10,26), outline=(0,36,76))
+        d.polygon([
+            (cx-20,nk_bot),(cx-118,nk_bot+54),(cx-175,nk_bot+175),
+            (cx+175,nk_bot+175),(cx+118,nk_bot+54),(cx+20,nk_bot),
+        ], fill=(1,8,24), outline=(0,58,130))
+        d.polygon([
+            (cx-20,nk_bot),(cx,nk_bot+40),(cx+20,nk_bot),
+        ], fill=(1,10,28), outline=(0,82,164))
+        # Neck circuit mesh
+        d.line([(cx,nk_top),(cx,nk_bot)], fill=(0,52,115), width=1)
+        for yy in range(nk_top+12, nk_bot, 14):
+            hw = int((yy - nk_top) * 0.22 + 5)
+            d.line([(cx-hw,yy),(cx+hw,yy)], fill=(0,44,98), width=1)
+        d.ellipse([cx-3,nk_top+18,cx+3,nk_top+24], fill=(0,80,170))
+        d.ellipse([cx-3,nk_top+36,cx+3,nk_top+42], fill=(0,80,170))
+        # Collarbone circuit dots & lines
+        d.line([(cx-80,nk_bot+20),(cx+80,nk_bot+20)], fill=(0,42,92), width=1)
+        for ox in (-65,-40,-15,15,40,65):
+            d.ellipse([cx+ox-2,nk_bot+18,cx+ox+2,nk_bot+22], fill=(0,75,158))
+        for ox in (-50,-28,28,50):
+            d.line([(cx+ox,nk_bot+36),(cx+ox*2,nk_bot+128)], fill=(0,26,60), width=1)
+
+        # ── 4. HUD rings ──────────────────────────────────────────────────
+        for rr, segs, col, ww in [
+            (170,10,(0,22,54),1),(152,8,(0,56,124),2),
+            (130,6,(0,78,166),2),(106,4,(0,132,212),2),
+        ]:
             gap   = 360.0 / segs
-            a_off = self.angle * (1 if segs % 2 == 0 else -0.7)
+            a_off = self.angle * (1 if segs%2==0 else -0.7)
             for i in range(segs):
-                s = int(a_off + i * gap) % 360
-                e = int(s + gap * 0.55) % 360
-                d.arc([cx-rr, cy-rr, cx+rr, cy+rr], start=s, end=e, fill=col, width=ww)
+                s = int(a_off + i*gap) % 360
+                e = int(s + gap*0.55) % 360
+                d.arc([cx-rr,cy-rr,cx+rr,cy+rr], start=s, end=e, fill=col, width=ww)
 
         if self.state == "speaking":
             for i in range(4):
-                rr  = int(160 + i*14 + p*8)
-                col = (0, max(40, 180-i*40), 255)
-                d.ellipse([cx-rr, cy-rr, cx+rr, cy+rr], outline=col, width=max(1, 3-i))
+                rr  = int(164 + i*14 + p*8)
+                col = (0, max(40, 176-i*40), 255)
+                d.ellipse([cx-rr,cy-rr,cx+rr,cy+rr], outline=col, width=max(1,3-i))
         elif self.state == "listening":
             for i in range(20):
                 a2 = math.radians(i*18 + self.angle*2)
                 h  = 10 + (math.sin(self.angle*0.15 + i*1.2)**2)*28
-                x1, y1 = int(cx+math.cos(a2)*154), int(cy+math.sin(a2)*154)
-                x2, y2 = int(cx+math.cos(a2)*(154+h)), int(cy+math.sin(a2)*(154+h))
+                x1,y1 = int(cx+math.cos(a2)*162), int(cy+math.sin(a2)*162)
+                x2,y2 = int(cx+math.cos(a2)*(162+h)), int(cy+math.sin(a2)*(162+h))
                 d.line([(x1,y1),(x2,y2)], fill=(102,217,255), width=2)
         elif self.state == "thinking":
             for i in range(4):
                 a2 = math.radians(self.angle*4 + i*90)
-                tx = int(cx + fw + 24 + math.cos(a2)*16)
-                ty = int(cy - 42  + math.sin(a2)*16)
-                d.ellipse([tx-4, ty-4, tx+4, ty+4], fill=(0, 102, 204))
+                tx = int(cx + fw + 30 + math.cos(a2)*18)
+                ty = int(cy - 46     + math.sin(a2)*18)
+                d.ellipse([tx-5,ty-5,tx+5,ty+5], fill=(0,100,200))
 
-        # ── HAIR — long, voluminous, puffy ───────────────────────────────
+        # ── 5. Realistic skull head shape ─────────────────────────────────
+        # Soft outer shell
+        d.ellipse([cx-fw-12, cy-fh-12, cx+fw+12, cy+fh+12],
+                  outline=(0,18,48), width=2)
+        # Head fill using realistic polygon
+        d.polygon(head_pts, fill=(1,11,28), outline=(0,178,255))
 
-        # Outer volume mass (widest at ear level, flows to canvas bottom)
-        d.polygon([
-            (cx-50, cy-fh-14),   (cx-fw-42, cy-fh+8),
-            (cx-fw-100, cy-fh+52), (cx-fw-126, cy-12),
-            (cx-fw-120, cy+62),  (cx-fw-108, cy+135),
-            (cx-fw-90, cy+205),  (cx-fw-68, cy+278),
-            (cx-fw-42, 392),     (cx-fw+8,  400),
-            (cx-22,    400),     (cx-16, cy+fh+48),
-            (cx-fw+14, cy+fh+15),
-        ], fill=HAIR_DARK, outline=HAIR_EDGE)
-        d.polygon([
-            (cx+50, cy-fh-14),   (cx+fw+42, cy-fh+8),
-            (cx+fw+100, cy-fh+52), (cx+fw+126, cy-12),
-            (cx+fw+120, cy+62),  (cx+fw+108, cy+135),
-            (cx+fw+90, cy+205),  (cx+fw+68, cy+278),
-            (cx+fw+42, 392),     (cx+fw-8,  400),
-            (cx+22,    400),     (cx+16, cy+fh+48),
-            (cx+fw-14, cy+fh+15),
-        ], fill=HAIR_DARK, outline=HAIR_EDGE)
+        # ── 6. Dense wireframe / circuit patterns ─────────────────────────
+        # Horizontal mesh lines (clipped to face ellipse)
+        for y_off in range(-int(fh*0.84), int(fh*0.90), 16):
+            x_sp = int(fw * math.sqrt(max(0, 1-(y_off/fh)**2)) * 0.90)
+            if x_sp > 5:
+                d.line([(cx-x_sp, cy+y_off),(cx+x_sp, cy+y_off)],
+                       fill=(0,20,50), width=1)
 
-        # Crown arc
-        d.pieslice([cx-fw-22, cy-fh-72, cx+fw+22, cy-fh+26],
-                   start=0, end=180, fill=HAIR_DARK, outline=HAIR_EDGE)
+        # Central vertical spine
+        d.line([(cx,cy-fh+6),(cx,cy+fh-6)], fill=(0,40,90), width=1)
 
-        # Inner layer (lighter — layered volume depth)
-        d.polygon([
-            (cx-44, cy-fh-8),    (cx-fw-24, cy-fh+18),
-            (cx-fw-72, cy-fh+65), (cx-fw-92, cy+5),
-            (cx-fw-84, cy+82),   (cx-fw-70, cy+158),
-            (cx-fw-52, cy+240),  (cx-fw-30, 388),
-            (cx-22,    400),     (cx-16, cy+fh+48),
-            (cx-fw+12, cy+fh+14),
-        ], fill=HAIR_MID, outline=HAIR_STRAND)
-        d.polygon([
-            (cx+44, cy-fh-8),    (cx+fw+24, cy-fh+18),
-            (cx+fw+72, cy-fh+65), (cx+fw+92, cy+5),
-            (cx+fw+84, cy+82),   (cx+fw+70, cy+158),
-            (cx+fw+52, cy+240),  (cx+fw+30, 388),
-            (cx+22,    400),     (cx+16, cy+fh+48),
-            (cx+fw-12, cy+fh+14),
-        ], fill=HAIR_MID, outline=HAIR_STRAND)
+        # Forehead circuit (bright central column like reference)
+        d.line([(cx,cy-fh+6),(cx,cy-fh+50)], fill=(0,82,172), width=2)
+        for y_off2, x_ext in [(cy-fh+16,10),(cy-fh+26,16),(cy-fh+36,22),(cy-fh+46,16)]:
+            d.line([(cx-x_ext,y_off2),(cx+x_ext,y_off2)], fill=(0,60,132), width=1)
+            d.ellipse([cx-2,y_off2-2,cx+2,y_off2+2], fill=(0,115,230))
+        d.arc([cx-34,cy-fh+8,cx+34,cy-fh+34], start=202,end=338, fill=(0,68,144),width=1)
+        d.arc([cx-22,cy-fh+12,cx+22,cy-fh+28], start=208,end=332, fill=(0,56,122),width=1)
 
-        # Bangs sweeping across forehead
-        for bx, bl in [(-46, 2), (-30, 6), (-14, 10), (0, 12), (14, 10), (30, 6), (46, 2)]:
-            d.arc([cx+bx-20, cy-fh-6+bl, cx+bx+20, cy-fh+22+bl],
-                  start=195, end=345, fill=HAIR_MID, width=3)
+        # Temple circuits (branching from skull sides like reference)
+        for sign in (-1,1):
+            tx = cx + sign*(fw+2)
+            d.line([(tx-sign*10,cy-fh+62),(tx-sign*26,cy-fh+46)], fill=(0,54,118),width=1)
+            d.line([(tx-sign*10,cy-fh+62),(tx-sign*28,cy-fh+76)], fill=(0,54,118),width=1)
+            d.line([(tx-sign*28,cy-fh+76),(tx-sign*44,cy-fh+70)], fill=(0,50,110),width=1)
+            d.line([(tx-sign*28,cy-fh+76),(tx-sign*38,cy-fh+88)], fill=(0,48,106),width=1)
+            d.ellipse([tx-sign*10-2,cy-fh+60,tx-sign*10+2,cy-fh+64], fill=(0,110,224))
+            d.ellipse([tx-sign*28-2,cy-fh+74,tx-sign*28+2,cy-fh+78], fill=(0,100,210))
 
-        # Energy strand highlights
-        for sx, sy, ex2, ey2, ex3, ey3 in [
-            (cx-58, cy-fh+5,  cx-fw-34, cy+fh+10, cx-fw-58, cy+215),
-            (cx-46, cy-fh+1,  cx-fw-22, cy+fh-2,  cx-fw-44, cy+200),
-            (cx-36, cy-fh-4,  cx-fw-8,  cy+fh-13, cx-fw-26, cy+178),
-            (cx-68, cy-fh+12, cx-fw-50, cy+108,   cx-fw-78, cy+272),
-            (cx-80, cy-fh+20, cx-fw-65, cy+128,   cx-fw-96, cy+285),
+        # Cheek vein network (the defining branching veins in the reference)
+        for sign in (-1,1):
+            bx = cx + sign*(fw-18)
+            # Main vein trunk
+            d.line([(bx,cy+8),(bx+sign*22,cy+16)], fill=(0,52,116),width=1)
+            d.line([(bx+sign*22,cy+16),(bx+sign*38,cy+10)], fill=(0,48,108),width=1)
+            d.line([(bx+sign*22,cy+16),(bx+sign*32,cy+30)], fill=(0,48,108),width=1)
+            # Secondary branches
+            d.line([(bx+sign*32,cy+30),(bx+sign*50,cy+36)], fill=(0,44,100),width=1)
+            d.line([(bx+sign*32,cy+30),(bx+sign*42,cy+48)], fill=(0,44,100),width=1)
+            d.line([(bx+sign*38,cy+10),(bx+sign*52,cy+6)],  fill=(0,42,94), width=1)
+            d.line([(bx+sign*50,cy+36),(bx+sign*62,cy+28)], fill=(0,40,90), width=1)
+            # Tertiary micro-branches
+            d.line([(bx+sign*42,cy+48),(bx+sign*54,cy+46)], fill=(0,38,84),width=1)
+            d.line([(bx+sign*42,cy+48),(bx+sign*48,cy+58)], fill=(0,36,80),width=1)
+            # Nodes
+            for nx2,ny2 in [(bx,cy+8),(bx+sign*22,cy+16),
+                            (bx+sign*32,cy+30),(bx+sign*50,cy+36),
+                            (bx+sign*42,cy+48)]:
+                d.ellipse([nx2-2,ny2-2,nx2+2,ny2+2], fill=(0,98,208))
+
+        # Jaw circuits
+        d.arc([cx-fw+8,cy+int(fh*0.44),cx+fw-8,cy+fh+20],
+              start=222,end=318, fill=(0,40,90), width=1)
+        for sign in (-1,1):
+            d.line([(cx+sign*26,cy+62),(cx+sign*48,cy+60)], fill=(0,44,98),width=1)
+            d.line([(cx+sign*48,cy+60),(cx+sign*62,cy+50)], fill=(0,40,90),width=1)
+            d.ellipse([cx+sign*48-2,cy+58,cx+sign*48+2,cy+62], fill=(0,88,188))
+
+        # Nose bridge circuit
+        d.line([(cx-6,ey+ery+6),(cx-14,cy)], fill=(0,38,85),width=1)
+        d.line([(cx+6,ey+ery+6),(cx+14,cy)], fill=(0,38,85),width=1)
+        d.line([(cx-14,cy),(cx-10,cy+16)], fill=(0,36,80),width=1)
+        d.line([(cx+14,cy),(cx+10,cy+16)], fill=(0,36,80),width=1)
+
+        # Eye-to-temple connectors
+        for sign in (-1,1):
+            d.line([(cx+sign*16,ey),(cx+sign*(fw-26),ey-14)], fill=(0,50,112),width=1)
+            d.line([(cx+sign*(fw-26),ey-14),(cx+sign*(fw-12),ey-8)], fill=(0,46,104),width=1)
+
+        # Skull crown nodes
+        for nx2,ny2 in [
+            (cx,cy-fh+6),(cx,cy-fh+50),
+            (cx-fw+8,cy-fh+30),(cx+fw-8,cy-fh+30),
+            (cx-fw+12,cy-22),(cx+fw-12,cy-22),
+            (cx-fw+18,cy+58),(cx+fw-18,cy+58),
+            (cx,cy+fh-16),
         ]:
-            d.line([(sx, sy), (ex2, ey2), (ex3, ey3)], fill=HAIR_HI, width=1)
-        for sx, sy, ex2, ey2, ex3, ey3 in [
-            (cx+58, cy-fh+5,  cx+fw+34, cy+fh+10, cx+fw+58, cy+215),
-            (cx+46, cy-fh+1,  cx+fw+22, cy+fh-2,  cx+fw+44, cy+200),
-            (cx+36, cy-fh-4,  cx+fw+8,  cy+fh-13, cx+fw+26, cy+178),
-            (cx+68, cy-fh+12, cx+fw+50, cy+108,   cx+fw+78, cy+272),
-            (cx+80, cy-fh+20, cx+fw+65, cy+128,   cx+fw+96, cy+285),
-        ]:
-            d.line([(sx, sy), (ex2, ey2), (ex3, ey3)], fill=HAIR_HI, width=1)
+            d.ellipse([nx2-3,ny2-3,nx2+3,ny2+3], fill=(0,108,220))
 
-        # ── Body / neck ───────────────────────────────────────────────────
-        d.rectangle([cx-16, cy+fh-6, cx+16, cy+fh+46],
-                    fill=(1, 14, 32), outline=(0, 34, 68))
-        d.polygon([
-            (cx-16, cy+fh+42), (cx-102, cy+fh+92), (cx-162, cy+fh+210),
-            (cx+162, cy+fh+210), (cx+102, cy+fh+92), (cx+16, cy+fh+42)],
-            fill=(1, 9, 28), outline=(0, 61, 128))
-        d.polygon([
-            (cx-16, cy+fh+42), (cx, cy+fh+78), (cx+16, cy+fh+42)],
-            fill=(1, 13, 34), outline=(0, 80, 160))
-
-        # ── Face oval ─────────────────────────────────────────────────────
-        d.ellipse([cx-fw-7, cy-fh-7, cx+fw+7, cy+fh+7],
-                  outline=(0, 30, 66), width=2)
-        d.ellipse([cx-fw, cy-fh, cx+fw, cy+fh],
-                  fill=(1, 14, 32), outline=(0, 180, 255), width=2)
-
-        # Subtle cheekbone definition
-        for sign in (-1, 1):
-            bx2 = cx + sign * (fw - 22)
-            d.arc([bx2-22, cy+8, bx2+22, cy+36],
-                  start=(215 if sign < 0 else 325),
-                  end=(325 if sign < 0 else 430),
-                  fill=(0, 55, 115), width=1)
-
-        # Scan line
-        scan_rel = int(self.angle * 2.5) % (fh * 2) - fh
+        # Animated scan line clipped to head polygon bounds
+        scan_rel = int(self.angle*2.8)%(fh*2)-fh
         scan_y   = cy + scan_rel
-        if cy - fh + 4 < scan_y < cy + fh - 4:
-            d.line([(cx-fw+8, scan_y), (cx+fw-8, scan_y)], fill=(0, 30, 78))
+        if cy-fh+4 < scan_y < cy+fh-4:
+            x_sp = int(fw*math.sqrt(max(0,1-(scan_rel/fh)**2))*0.90)
+            d.line([(cx-x_sp,scan_y),(cx+x_sp,scan_y)], fill=(0,60,138))
 
-        # ── Glow pass 2: tight feature glow ──────────────────────────────
-        gl2 = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        # ── 7. Tight glow — strong skull-edge glow like reference ─────────
+        gl2 = Image.new("RGBA",(W,H),(0,0,0,0))
         g2  = ImageDraw.Draw(gl2)
-        g2.ellipse([cx-fw, cy-fh, cx+fw, cy+fh],
-                   outline=(0, 180, 255, 155), width=4)
-        for ex in (cx-34, cx+34):
-            g2.ellipse([ex-20, ey-16, ex+20, ey+16], fill=(0, 160, 240, 115))
-        g2.ellipse([cx-mw-4, my-8, cx+mw+4, my+6], fill=(0, 100, 200, 55))
+        g2.polygon(head_pts, outline=(0,180,255,218))
+        g2.ellipse([cx-fw-4,cy-fh-4,cx+fw+4,cy+fh+4],
+                   outline=(0,100,192,88), width=12)
+        for ex in (cx-36,cx+36):
+            g2.ellipse([ex-25,ey-21,ex+25,ey+21], fill=(0,145,242,95))
         if self.state == "speaking":
-            oh = max(2, int(3 + self._lip_sync_amp * 24))
-            g2.ellipse([cx-mw-2, my-oh-2, cx+mw+2, my+oh+2],
-                       outline=(0, 180, 255, 160), width=3)
-        gl2 = gl2.filter(ImageFilter.GaussianBlur(radius=6))
+            oh = max(2,int(3+self._lip_sync_amp*24))
+            g2.ellipse([cx-mw-3,my-oh-3,cx+mw+3,my+oh+3],
+                       outline=(0,180,255,152), width=3)
+        else:
+            g2.ellipse([cx-mw-3,my-9,cx+mw+3,my+7], fill=(0,84,175,44))
+        gl2 = gl2.filter(ImageFilter.GaussianBlur(radius=9))
         img.alpha_composite(gl2)
         d = ImageDraw.Draw(img)
 
-        # ── Eyebrows — arched, feminine ───────────────────────────────────
-        br_y    = cy - 54
-        br_lift = {"listening": -8, "thinking": 6, "speaking": -4}.get(self.state, 0)
-        d.line([
-            (cx-58, br_y+br_lift+9), (cx-44, br_y+br_lift+2),
-            (cx-30, br_y+br_lift-3), (cx-18, br_y+br_lift+2),
-        ], fill=(102, 217, 255), width=2)
-        d.line([
-            (cx+18, br_y+br_lift+2), (cx+30, br_y+br_lift-3),
-            (cx+44, br_y+br_lift+2), (cx+58, br_y+br_lift+9),
-        ], fill=(102, 217, 255), width=2)
+        # ── 8. Eyebrows ───────────────────────────────────────────────────
+        br_y    = cy - 55
+        br_lift = {"listening":-8,"thinking":6,"speaking":-4}.get(self.state,0)
+        d.line([(cx-58,br_y+br_lift+9),(cx-44,br_y+br_lift+2),
+                (cx-30,br_y+br_lift-3),(cx-18,br_y+br_lift+2)],
+               fill=(102,217,255), width=2)
+        d.line([(cx+18,br_y+br_lift+2),(cx+30,br_y+br_lift-3),
+                (cx+44,br_y+br_lift+2),(cx+58,br_y+br_lift+9)],
+               fill=(102,217,255), width=2)
 
-        # ── Eyes — large almond with layered iris ─────────────────────────
-        for ex in (cx-34, cx+34):
-            open_ry = max(1, int(ery * (1.0 - bp)))
-
-            d.ellipse([ex-erx, ey-open_ry, ex+erx, ey+open_ry],
-                      fill=(1, 9, 32), outline=(0, 180, 255), width=2)
-
+        # ── 9. Eyes ───────────────────────────────────────────────────────
+        for ex in (cx-36,cx+36):
+            open_ry = max(1,int(ery*(1.0-bp)))
+            d.ellipse([ex-erx,ey-open_ry,ex+erx,ey+open_ry],
+                      fill=(1,9,32), outline=(0,180,255), width=2)
             if bp < 0.75:
-                iry = min(open_ry - 1, 13)
+                iry = min(open_ry-1,12)
                 if iry > 0:
-                    # Iris rings
-                    d.ellipse([ex-16, ey-iry-1, ex+16, ey+iry+1],
-                              outline=(0, 75, 175), width=1)
-                    d.ellipse([ex-14, ey-iry+1, ex+14, ey+iry-1],
-                              fill=(0, 45, 112), outline=(0, 125, 205), width=1)
-                    # Iris spokes
-                    for ia in range(0, 360, 40):
-                        iax = math.cos(math.radians(ia)) * 9
-                        iay = math.sin(math.radians(ia)) * min(9, iry-1)
-                        d.line([(ex, ey), (ex+int(iax), ey+int(iay))],
-                               fill=(0, 75, 155), width=1)
-                    d.ellipse([ex-6, ey-min(6,iry), ex+6, ey+min(6,iry)],
-                              fill=(0, 2, 8))
-                    # Two catchlights = life
-                    d.ellipse([ex-9, ey-iry+1, ex-3, ey-iry+6],
-                              fill=(102, 217, 255))
-                    d.ellipse([ex+3, ey-iry+4, ex+7,  ey-iry+8],
-                              fill=(232, 244, 255))
-                    d.ellipse([ex-7, ey-min(7,iry)+1, ex+7, ey+min(7,iry)-1],
-                              outline=(0, 180, 255), width=1)
-
+                    d.ellipse([ex-15,ey-iry-1,ex+15,ey+iry+1],
+                              outline=(0,72,172), width=1)
+                    d.ellipse([ex-13,ey-iry+1,ex+13,ey+iry-1],
+                              fill=(0,42,108), outline=(0,122,202), width=1)
+                    for ia in range(0,360,45):
+                        iax = math.cos(math.radians(ia))*8
+                        iay = math.sin(math.radians(ia))*min(8,iry-1)
+                        d.line([(ex,ey),(ex+int(iax),ey+int(iay))],
+                               fill=(0,72,152), width=1)
+                    d.ellipse([ex-5,ey-min(5,iry),ex+5,ey+min(5,iry)], fill=(0,2,8))
+                    d.ellipse([ex-9,ey-iry+1,ex-3,ey-iry+6], fill=(102,217,255))
+                    d.ellipse([ex+3,ey-iry+4,ex+7,ey-iry+8], fill=(232,244,255))
+                    d.ellipse([ex-7,ey-min(7,iry)+1,ex+7,ey+min(7,iry)-1],
+                              outline=(0,180,255), width=1)
             if bp > 0.05:
-                lid_h = max(1, int(ery * 2 * bp))
-                d.ellipse([ex-erx, ey-ery, ex+erx, ey-ery+lid_h],
-                          fill=(1, 14, 32))
+                lid_h = max(1,int(ery*2*bp))
+                d.ellipse([ex-erx,ey-ery,ex+erx,ey-ery+lid_h], fill=(1,12,30))
+            d.arc([ex-erx,ey-ery,ex+erx,ey+ery],
+                  start=182,end=358,fill=(102,217,255),width=2)
+            for lx_off in range(-erx+2,erx+1,4):
+                lx2 = ex+lx_off
+                ly2 = ey-max(1,open_ry)-1
+                mid = abs(lx_off)/erx
+                tip_len = int(7-mid*4)
+                flick = (-1 if lx_off<-erx//2 else (1 if lx_off>erx//2 else 0))
+                d.line([(lx2,ly2),(lx2+flick,ly2-max(2,tip_len))],
+                       fill=(102,217,255), width=1)
+            d.arc([ex-erx+4,ey-2,ex+erx-4,ey+10],
+                  start=5,end=175,fill=(0,26,58),width=1)
 
-            # Upper lash arc (top of eye)
-            d.arc([ex-erx, ey-ery, ex+erx, ey+ery],
-                  start=182, end=358, fill=(102, 217, 255), width=2)
+        # ── 10. Nose ──────────────────────────────────────────────────────
+        d.line([(cx,ey+ery+8),(cx,ny-2)], fill=(0,34,85), width=1)
+        d.arc([cx-18,ny-5,cx-2,ny+10], start=0,  end=200, fill=(0,42,88), width=1)
+        d.arc([cx+2, ny-5,cx+18,ny+10], start=340,end=180, fill=(0,42,88), width=1)
+        d.ellipse([cx-2,ny-2,cx+2,ny+2], fill=(0,68,142))
 
-            # Dramatic lash tips — longer, fanning at corners
-            for lx_off in range(-erx+2, erx+1, 4):
-                lx  = ex + lx_off
-                ly  = ey - max(1, open_ry) - 1
-                mid = abs(lx_off) / erx
-                tip_len = int(7 - mid * 4)
-                flick   = (-1 if lx_off < -erx//2 else (1 if lx_off > erx//2 else 0))
-                d.line([(lx, ly), (lx + flick, ly - max(2, tip_len))],
-                       fill=(102, 217, 255), width=1)
-
-            # Lower lash and liner
-            d.arc([ex-erx+4, ey-2, ex+erx-4, ey+10],
-                  start=5, end=175, fill=(0, 26, 58), width=1)
-            d.arc([ex-erx+3, ey-open_ry+3, ex+erx-3, ey+open_ry+5],
-                  start=0, end=180, fill=(0, 55, 115), width=1)
-
-        # ── Nose — delicate ───────────────────────────────────────────────
-        d.line([(cx, ey+ery+6), (cx, ny-2)], fill=(0, 34, 85))
-        d.arc([cx-17, ny-5, cx-2, ny+8],  start=0,   end=195, fill=(0, 42, 88), width=1)
-        d.arc([cx+2,  ny-5, cx+17, ny+8], start=345, end=180, fill=(0, 42, 88), width=1)
-
-        # ── Lips — full, beautiful ────────────────────────────────────────
+        # ── 11. Lips ──────────────────────────────────────────────────────
         if self.state == "speaking":
-            oh = max(2, int(3 + self._lip_sync_amp * 26))
-            d.ellipse([cx-mw, my-oh, cx+mw, my+oh],
-                      fill=(2, 6, 18), outline=(0, 180, 255), width=2)
+            oh = max(2,int(3+self._lip_sync_amp*26))
+            d.ellipse([cx-mw,my-oh,cx+mw,my+oh],
+                      fill=(2,5,16), outline=(0,180,255), width=2)
             if oh > 8:
-                d.arc([cx-mw+5, my-oh+1, cx+mw-5, my+3],
-                      start=0, end=180, fill=(215, 235, 255))
-            d.line([
-                (cx-mw, my-oh+3), (cx-mw//2-3, my-oh-3),
-                (cx-7,  my-oh-8), (cx,  my-oh-5),
-                (cx+7,  my-oh-8), (cx+mw//2+3, my-oh-3),
-                (cx+mw, my-oh+3),
-            ], fill=(102, 217, 255), width=2)
-            d.arc([cx-mw+2, my-oh//2, cx+mw-2, my+oh+4],
-                  start=0, end=180, fill=(0, 136, 204), width=2)
-
+                d.arc([cx-mw+5,my-oh+1,cx+mw-5,my+3],
+                      start=0,end=180,fill=(215,235,255))
+            d.line([(cx-mw,my-oh+3),(cx-mw//2-3,my-oh-4),(cx-7,my-oh-8),
+                    (cx,my-oh-5),(cx+7,my-oh-8),(cx+mw//2+3,my-oh-4),(cx+mw,my-oh+3)],
+                   fill=(102,217,255), width=2)
+            d.arc([cx-mw+2,my-oh//2,cx+mw-2,my+oh+4],
+                  start=0,end=180,fill=(0,132,202),width=2)
         elif self.state == "listening":
-            d.arc([cx-mw, my-15, cx+mw, my+7],
-                  start=15, end=165, fill=(0, 180, 255), width=2)
-            d.line([
-                (cx-mw, my-8), (cx-mw//2-3, my-13), (cx-7, my-15),
-                (cx, my-12), (cx+7, my-15), (cx+mw//2+3, my-13), (cx+mw, my-8)
-            ], fill=(0, 136, 204), width=1)
-            d.arc([cx-mw+4, my-5, cx+mw-4, my+7],
-                  start=0, end=180, fill=(0, 80, 165), width=1)
-
+            d.arc([cx-mw,my-14,cx+mw,my+8], start=15,end=165,
+                  fill=(0,180,255), width=2)
+            d.line([(cx-mw,my-7),(cx-mw//2-3,my-12),(cx-7,my-14),
+                    (cx,my-11),(cx+7,my-14),(cx+mw//2+3,my-12),(cx+mw,my-7)],
+                   fill=(0,136,204), width=1)
         elif self.state == "thinking":
-            d.line([
-                (cx-mw+6, my+5), (cx-4, my+2), (cx+7, my-2), (cx+mw-5, my-8)
-            ], fill=(0, 180, 255), width=2)
-            d.line([
-                (cx-mw+6, my+5), (cx-mw//2+2, my-2), (cx-4, my)
-            ], fill=(0, 80, 160), width=1)
+            d.line([(cx-mw+6,my+5),(cx-4,my+2),(cx+7,my-2),(cx+mw-5,my-8)],
+                   fill=(0,180,255), width=2)
+            d.line([(cx-mw+6,my+5),(cx-mw//2+2,my-2),(cx-4,my)],
+                   fill=(0,80,160), width=1)
+        else:
+            d.arc([cx-mw,my-14,cx+mw,my+10], start=15,end=165,
+                  fill=(0,180,255), width=2)
+            d.line([(cx-mw,my-7),(cx-mw//2-3,my-12),(cx-7,my-14),
+                    (cx,my-11),(cx+7,my-14),(cx+mw//2+3,my-12),(cx+mw,my-7)],
+                   fill=(102,217,255), width=1)
+            d.arc([cx-mw+3,my-4,cx+mw-3,my+10],
+                  start=0,end=180,fill=(0,102,192),width=2)
+            d.line([(cx-10,my+4),(cx+10,my+4)], fill=(0,180,255), width=1)
 
-        else:  # idle — warm beautiful smile
-            d.arc([cx-mw, my-15, cx+mw, my+9],
-                  start=15, end=165, fill=(0, 180, 255), width=2)
-            d.line([
-                (cx-mw, my-8), (cx-mw//2-3, my-13), (cx-7, my-15),
-                (cx, my-12), (cx+7, my-15), (cx+mw//2+3, my-13), (cx+mw, my-8)
-            ], fill=(102, 217, 255), width=1)
-            d.arc([cx-mw+3, my-5, cx+mw-3, my+9],
-                  start=0, end=180, fill=(0, 105, 195), width=2)
-            d.line([(cx-10, my+3), (cx+10, my+3)], fill=(0, 180, 255), width=1)
-
-        # ── Particles ─────────────────────────────────────────────────────
+        # ── 12. Particles ─────────────────────────────────────────────────
         for i in range(10):
-            a2  = math.radians(self.angle * 0.9 + i * 36)
-            r   = 158 + (i * 17 % 36)
-            px  = int(cx + math.cos(a2) * r)
-            py  = int(cy + math.sin(a2) * r * 0.52)
-            sz  = 2 if i % 2 == 0 else 1
-            col = (0, 180, 255) if i % 3 == 0 else ((0, 102, 204) if i % 3 == 1 else (0, 26, 58))
-            d.ellipse([px-sz, py-sz, px+sz, py+sz], fill=col)
+            a2  = math.radians(self.angle*0.9 + i*36)
+            r   = 162 + (i*17%38)
+            px  = int(cx + math.cos(a2)*r)
+            py2 = int(cy + math.sin(a2)*r*0.52)
+            sz  = 2 if i%2==0 else 1
+            col = (0,180,255) if i%3==0 else ((0,102,204) if i%3==1 else (0,26,58))
+            d.ellipse([px-sz,py2-sz,px+sz,py2+sz], fill=col)
 
-        # ── Blit to canvas ────────────────────────────────────────────────
+        # ── 13. Blit to canvas ────────────────────────────────────────────
         photo = ImageTk.PhotoImage(img)
         self._tk_avatar_frame = photo
         c.create_image(0, 0, image=photo, anchor="nw")
 
-        # Canvas text on top (Tkinter font rendering > PIL default)
-        for i, txt in enumerate(["ID : ALIA-1", "VER: 2.0",
-                                  f"MOD: {self.state.upper()}", "NET: ACTIVE"]):
-            c.create_text(cx+fw+16, cy-36+i*14,
-                          text=txt, font=("Courier", 7), fill=TEXT_DIM, anchor="w")
-        for i, txt in enumerate(["NEURAL LINK", "EMOTION: ON", "VOICE: SYNC"]):
-            c.create_text(cx-fw-16, cy-36+i*14,
-                          text=txt, font=("Courier", 7), fill=TEXT_DIM, anchor="e")
+        for i,txt in enumerate(["ID : ALIA-1","VER: 2.0",
+                                 f"MOD: {self.state.upper()}","NET: ACTIVE"]):
+            c.create_text(cx+fw+18, cy-36+i*14,
+                          text=txt, font=("Courier",7), fill=TEXT_DIM, anchor="w")
+        for i,txt in enumerate(["NEURAL LINK","EMOTION: ON","VOICE: SYNC"]):
+            c.create_text(cx-fw-18, cy-36+i*14,
+                          text=txt, font=("Courier",7), fill=TEXT_DIM, anchor="e")
         self._draw_hud_corners(c, cx, cy)
 
     def _draw_avatar_canvas_fallback(self, c):
