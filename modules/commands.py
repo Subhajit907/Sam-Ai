@@ -9,7 +9,7 @@ import time
 import sys
 
 from modules.voice import speak
-from modules.ai import ask_openai, reset_conversation
+from modules.ai import ask_openai, ask_openai_with_vision, reset_conversation
 from modules.projects import (
     create_python_project,
     create_game_project,
@@ -351,7 +351,7 @@ def handle_command(command):
         speak("Alright, see you later!")
         from modules import vision
         vision.stop_camera()
-        os._exit(0)
+        sys.exit(0)
 
     elif "reset" in cmd or "forget everything" in cmd or "start over" in cmd:
         reset_conversation()
@@ -597,25 +597,19 @@ def handle_command(command):
         from modules import vision
         from modules import state
 
-        # If the camera is on, only use vision for visual queries
-        _VISUAL_TRIGGERS = (
-            "what is this", "what's this", "whats this",
-            "what am i holding", "what is in my hand", "what's in my hand",
-            "whats in my hand", "holding on my hand", "holding now",
-            "what are you seeing", "what do you see", "can you see",
-            "look at", "identify this", "recognize this", "recognise this",
-            "describe this", "show you", "what is it", "what is that",
-            "what i am holding", "what i'm holding",
-        )
-        is_visual_query = vision._running and any(t in cmd for t in _VISUAL_TRIGGERS)
-
-        if is_visual_query:
-            if state.gui:
-                state.gui.set_state("thinking")
-            answer = vision.identify_object(command)
-            if state.gui:
-                state.gui.set_state("speaking", answer)
-            speak(answer)
-        else:
-            reply = ask_openai(command)
-            speak(reply)
+        # When camera is on, always send the live frame with the question
+        if vision._running:
+            import cv2, base64
+            frame = vision.get_frame()
+            if frame is not None:
+                ret, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if ret:
+                    b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
+                    if state.gui:
+                        state.gui.set_state("thinking")
+                    reply = ask_openai_with_vision(command, b64)
+                    speak(reply)
+                    return
+            # Camera on but no frame yet — fall through to text
+        reply = ask_openai(command)
+        speak(reply)

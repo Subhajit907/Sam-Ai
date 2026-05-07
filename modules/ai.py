@@ -26,6 +26,17 @@ Rules:
 - If you don't know something, say so naturally
 - Never sound robotic or formal"""
 
+SYSTEM_PROMPT_VISION = """You are Alia, a friendly AI assistant. You have a live camera feed from the user's webcam attached to every message.
+
+Your job:
+- Look at the image and answer the user's question based on what you actually see
+- Describe objects, items, text, colours, or scenes visible in the frame — be specific
+- If the user holds something up or shows you something, describe it clearly and helpfully
+- Do NOT say you cannot see — you CAN see the camera feed
+- Do NOT identify or name any person by face — only describe objects and items
+- Keep answers short and conversational, spoken like a real person
+- Never use bullet points or headers — just talk naturally"""
+
 MAX_HISTORY = 20  # keep last 20 messages to avoid token bloat
 
 # Conversation history — seeded from persistent DB on first use
@@ -70,6 +81,54 @@ def ask_openai(prompt):
     except Exception as e:
         print(f"Error communicating with OpenAI: {e}")
         return "Sorry, something went wrong on my end."
+
+
+def ask_openai_with_vision(prompt: str, b64_image: str) -> str:
+    """
+    Send a prompt + camera frame to GPT-4o and get a response.
+    Uses the vision-aware system prompt and maintains the same conversation history.
+    """
+    from modules.memory import save_chat
+    history = _get_history()
+
+    # Swap system prompt to vision-aware version for this call
+    vision_history = [{"role": "system", "content": SYSTEM_PROMPT_VISION}] + history[1:]
+
+    user_msg = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{b64_image}",
+                    "detail": "low",
+                },
+            },
+        ],
+    }
+    vision_history.append(user_msg)
+    save_chat("user", prompt)
+
+    # Also append text-only version to the real history so context is preserved
+    history.append({"role": "user", "content": prompt})
+    if len(history) > MAX_HISTORY + 1:
+        history[:] = [history[0]] + history[-(MAX_HISTORY):]
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=vision_history,  # type: ignore[arg-type]
+            temperature=0.85,
+            max_tokens=300,
+        )
+        reply = response.choices[0].message.content or ""
+        history.append({"role": "assistant", "content": reply})
+        save_chat("assistant", reply)
+        return reply
+    except Exception as e:
+        print(f"Vision API error: {e}")
+        return ask_openai(prompt)   # graceful fallback to text-only
 
 
 def reset_conversation():

@@ -223,6 +223,19 @@ def get_all_leads_summary(sheet_name: str = "Sheet1") -> dict:
     return summary
 
 
+def mark_intro_sent(row_num: int, sheet_name: str = "Sheet1") -> None:
+    """Set Status=intro and record the current timestamp in Sent Date."""
+    svc = _get_service()
+    col_e = _col_letter(COL_STATUS)
+    col_f = _col_letter(COL_SENT_DATE)
+    svc.spreadsheets().values().update(
+        spreadsheetId=_sheet_id(),
+        range=f"{sheet_name}!{col_e}{row_num}:{col_f}{row_num}",
+        valueInputOption="RAW",
+        body={"values": [["intro", datetime.now().strftime("%Y-%m-%d %H:%M")]]},
+    ).execute()
+
+
 def mark_email_sent(row_num: int, sheet_name: str = "Sheet1") -> None:
     """Set Status=sent and record the current timestamp in Sent Date."""
     svc = _get_service()

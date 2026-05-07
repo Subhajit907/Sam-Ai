@@ -8,17 +8,18 @@ _cap = None
 _running = False
 _latest_frame = None
 _frame_lock = threading.Lock()
+_reader_thread: threading.Thread | None = None
 
 
 def start_camera():
     """Open webcam and start reading frames in a background thread."""
-    global _cap, _running
+    global _cap, _running, _reader_thread
     _cap = cv2.VideoCapture(0)
     if not _cap.isOpened():
         raise RuntimeError("Could not open webcam. Make sure it is connected and not in use.")
     _running = True
-    t = threading.Thread(target=_read_frames, daemon=True)
-    t.start()
+    _reader_thread = threading.Thread(target=_read_frames, daemon=True)
+    _reader_thread.start()
 
 
 def _read_frames():
@@ -36,9 +37,12 @@ def _read_frames():
 
 
 def stop_camera():
-    """Stop webcam capture and release the device."""
-    global _cap, _running, _latest_frame
+    """Stop webcam capture and release the device. Waits for reader thread to finish."""
+    global _cap, _running, _latest_frame, _reader_thread
     _running = False
+    if _reader_thread is not None:
+        _reader_thread.join(timeout=2.0)
+        _reader_thread = None
     if _cap:
         _cap.release()
         _cap = None
@@ -79,11 +83,20 @@ def identify_object(question="What object am I holding or showing? Describe it b
     except Exception:
         memory_hint = ""
 
+    system_msg = (
+        "You are Alia, an AI assistant with live camera access. "
+        "Your job is to describe objects, items, text, and scenes shown to you. "
+        "Focus only on physical objects and what the user is holding or showing — "
+        "do not comment on or identify any people or faces. "
+        "Be concise (1-2 sentences) and speak directly to the user."
+    )
+
     try:
         from modules.ai import client
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
+                {"role": "system", "content": system_msg},
                 {
                     "role": "user",
                     "content": [
@@ -96,7 +109,7 @@ def identify_object(question="What object am I holding or showing? Describe it b
                             },
                         },
                     ],
-                }
+                },
             ],
             max_tokens=200,
         )

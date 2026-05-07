@@ -14,20 +14,23 @@ SCOPES = [
 ]
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TOKEN_FILE = os.path.join(_BASE_DIR, "google_token.pkl")
 CREDENTIALS_FILE = os.path.join(_BASE_DIR, "credentials.json")
 
 
-def get_credentials() -> Credentials:
+def get_credentials(account: str = "default") -> Credentials:
     """
-    Return valid Google OAuth2 credentials.
-    - First run: opens browser for user to authorize → saves token.
+    Return valid Google OAuth2 credentials for the given account slot.
+    account="default" uses google_token.pkl (primary account).
+    account="account2" uses google_token_account2.pkl, etc.
+    - First run for a slot: opens browser to authorize → saves token.
     - Subsequent runs: loads saved token, refreshes if expired.
     """
-    creds = None
+    suffix = "" if account == "default" else f"_{account}"
+    token_file = os.path.join(_BASE_DIR, f"google_token{suffix}.pkl")
 
-    if os.path.exists(TOKEN_FILE):
-        with open(TOKEN_FILE, "rb") as f:
+    creds = None
+    if os.path.exists(token_file):
+        with open(token_file, "rb") as f:
             creds = pickle.load(f)
 
     if not creds or not creds.valid:
@@ -43,10 +46,12 @@ def get_credentials() -> Credentials:
                     "  3. Create OAuth 2.0 credentials (Desktop App)\n"
                     "  4. Download credentials.json → place it in the project root\n"
                 )
+            print(f"\n  Opening browser to authorise account slot: '{account}'")
+            print(f"  Make sure to log in with your SECOND Gmail account.\n")
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
 
-        with open(TOKEN_FILE, "wb") as f:
+        with open(token_file, "wb") as f:
             pickle.dump(creds, f)
 
     return creds

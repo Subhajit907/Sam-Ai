@@ -1,7 +1,9 @@
 """
 Send personalised emails to the first N pending leads in a given sheet tab.
-Usage: python send_batch.py [sheet_name] [limit]
-Defaults: Sheet2, 200
+Usage: python send_batch.py [sheet_name] [limit] [account]
+  sheet_name : Sheet tab name (default: Sheet2)
+  limit      : Max emails to send (default: 200)
+  account    : OAuth account slot (default: "default", use "account2" for 2nd Gmail)
 """
 import os, sys, re
 sys.path.insert(0, os.path.dirname(__file__))
@@ -10,6 +12,7 @@ load_dotenv()
 
 SHEET_NAME = sys.argv[1] if len(sys.argv) > 1 else "Sheet2"
 LIMIT      = int(sys.argv[2]) if len(sys.argv) > 2 else 200
+ACCOUNT    = sys.argv[3] if len(sys.argv) > 3 else "default"
 
 from modules.sheets import (
     _get_service, _sheet_id, ensure_alia_columns,
@@ -43,7 +46,7 @@ if not leads:
     print(f"No pending leads found in '{SHEET_NAME}'.")
     sys.exit(0)
 
-print(f"Targeting sheet: '{SHEET_NAME}' — sending to first {LIMIT} pending leads")
+print(f"Targeting sheet: '{SHEET_NAME}' — sending to first {LIMIT} pending leads — account: '{ACCOUNT}'")
 print(f"Found {len(leads)} lead(s) to process:\n")
 for l in leads:
     valid = "✓" if is_valid_email(l['email']) else "✗ INVALID EMAIL"
@@ -61,7 +64,7 @@ for lead in leads:
 
     print(f"\n  ✉  Generating email for {lead['name']} ({lead['email']})…")
     try:
-        subject, body = send_to_lead(lead, sheet=SHEET_NAME)
+        subject, body = send_to_lead(lead, sheet=SHEET_NAME, account=ACCOUNT)
         mark_email_sent(lead["row"], sheet_name=SHEET_NAME)
         print(f"  ✓  Sent!")
         print(f"     Subject : {subject}")

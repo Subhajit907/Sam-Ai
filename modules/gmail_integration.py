@@ -31,27 +31,25 @@ Services    : Custom AI assistants, workflow automation, data pipelines,
 # Delay between sends to avoid spam triggers (seconds)
 SEND_DELAY_SECONDS = 8
 
-_service     = None
-_sender_email: str | None = None
+_services:      dict[str, object] = {}
+_sender_emails: dict[str, str]    = {}
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-def _get_service():
-    global _service
-    if _service is None:
-        creds    = get_credentials()
-        _service = build("gmail", "v1", credentials=creds)
-    return _service
+def _get_service(account: str = "default"):
+    if account not in _services:
+        creds = get_credentials(account)
+        _services[account] = build("gmail", "v1", credentials=creds)
+    return _services[account]
 
 
-def get_sender_email() -> str:
-    """Auto-detect the authenticated Gmail address."""
-    global _sender_email
-    if not _sender_email:
-        profile       = _get_service().users().getProfile(userId="me").execute()
-        _sender_email = profile["emailAddress"]
-    return _sender_email
+def get_sender_email(account: str = "default") -> str:
+    """Auto-detect the authenticated Gmail address for the given account slot."""
+    if account not in _sender_emails:
+        profile = _get_service(account).users().getProfile(userId="me").execute()
+        _sender_emails[account] = profile["emailAddress"]
+    return _sender_emails[account]
 
 
 
@@ -161,22 +159,21 @@ def send_email(
     body: str,
     delay: bool = True,
     tracking_uid: str | None = None,
+    account: str = "default",
 ) -> None:
     """
     Send email. If TRACKING_BASE_URL is set, sends multipart/alternative with
     a tracking pixel in the HTML part. Otherwise sends plain-text only.
     """
-    sender  = get_sender_email()
+    sender  = get_sender_email(account)
     msg_id  = f"<{uuid.uuid4()}@subhajitmandal.in>"
     now_rfc = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
 
     if TRACKING_BASE_URL and tracking_uid:
-        # multipart/alternative: plain fallback + HTML with pixel
         msg = MIMEMultipart("alternative")
         msg.attach(MIMEText(body, "plain", "utf-8"))
         msg.attach(MIMEText(_body_to_html(body, tracking_uid), "html", "utf-8"))
     else:
-        # Plain text only — safest for inbox delivery
         msg = MIMEText(body, "plain", "utf-8")
 
     msg["To"]         = to_email
@@ -187,7 +184,7 @@ def send_email(
     msg["Date"]       = now_rfc
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    _get_service().users().messages().send(
+    _get_service(account).users().messages().send(
         userId="me",
         body={"raw": raw},
     ).execute()
@@ -200,6 +197,7 @@ def send_to_lead(
     lead: dict,
     delay: bool = True,
     sheet: str = "",
+    account: str = "default",
 ) -> tuple[str, str]:
     """
     Generate + send a personalised email to a single lead.
@@ -209,7 +207,7 @@ def send_to_lead(
     body    = generate_email_body(lead)
 
     tracking_uid = str(uuid.uuid4()) if TRACKING_BASE_URL else None
-    send_email(lead["email"], subject, body, delay=delay, tracking_uid=tracking_uid)
+    send_email(lead["email"], subject, body, delay=delay, tracking_uid=tracking_uid, account=account)
 
     if tracking_uid:
         _register_send(tracking_uid, lead, sheet=sheet)
