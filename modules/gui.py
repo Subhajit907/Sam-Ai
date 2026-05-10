@@ -1,6 +1,7 @@
 """GUI Module - Jarvis-like frontend for Alia AI"""
 
 import tkinter as tk
+from tkinter import simpledialog, messagebox
 import math
 import random
 import threading
@@ -142,6 +143,55 @@ class AliaGUI:
             cursor="hand2", command=self._toggle_avatar,
         )
         self._avatar_btn.pack(side="left", padx=20)
+
+        # ── Mode switcher ─────────────────────────────────────────────────
+        from modules.config import get_mode
+        _initial = "Free (Ollama)" if get_mode() == "free" else "Paid (OpenAI)"
+        self._mode_var = tk.StringVar(value=_initial)
+
+        tk.Label(btn_frame, text="MODE:", font=("Courier", 8),
+                 fg=TEXT_DIM, bg=BG).pack(side="left", padx=(20, 2))
+
+        mode_menu = tk.OptionMenu(btn_frame, self._mode_var,
+                                  "Free (Ollama)", "Paid (OpenAI)",
+                                  command=self._on_mode_change)
+        mode_menu.configure(
+            font=("Courier", 9, "bold"), fg=GLOW, bg=BG,
+            activebackground=DIM, activeforeground=BRIGHT,
+            highlightthickness=0, relief="flat", bd=0,
+            indicatoron=True, cursor="hand2",
+        )
+        mode_menu["menu"].configure(
+            font=("Courier", 9), fg=GLOW, bg="#0d1a2e",
+            activebackground=RING2, activeforeground=BRIGHT,
+        )
+        mode_menu.pack(side="left")
+
+    # ------------------------------------------------------------------ #
+    #  Mode switcher
+    # ------------------------------------------------------------------ #
+    def _on_mode_change(self, selection: str):
+        from modules.config import get_mode, get_openai_key, save_config
+        new_mode = "free" if "Ollama" in selection else "openai"
+
+        if new_mode == "openai" and not get_openai_key():
+            key = simpledialog.askstring(
+                "OpenAI API Key",
+                "Enter your OpenAI API key:",
+                parent=self.root, show="*",
+            )
+            if not key or not key.strip():
+                # Revert dropdown — user cancelled
+                self._mode_var.set("Free (Ollama)")
+                return
+            save_config("openai", key.strip())
+        else:
+            save_config(new_mode)
+
+        # Confirm switch in the status label
+        label = "Free Mode (Ollama)" if new_mode == "free" else "Paid Mode (OpenAI)"
+        self.status_var.set(f"Switched to {label}")
+        self.root.after(2500, lambda: self.status_var.set("STANDBY"))
 
     # ------------------------------------------------------------------ #
     #  Avatar toggle
