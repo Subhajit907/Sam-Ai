@@ -15,7 +15,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_tts_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+_tts_client = None  # lazy-init only when needed (paid mode)
+
+
+def _get_tts_client():
+    global _tts_client
+    if _tts_client is None:
+        _tts_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+    return _tts_client
 
 from modules import state
 
@@ -128,15 +135,27 @@ def speak(text):
         state.gui.set_state("speaking", f"Alia: {text}")
 
     try:
-        response = _tts_client.audio.speech.create(
-            model="tts-1",
-            voice="nova",
-            input=text,
-            speed=1.05,
-        )
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            tmp_path = f.name
-            f.write(response.content)
+        from modules.config import get_mode
+        tmp_path = tempfile.mktemp(suffix=".mp3")
+
+        if get_mode() == "free":
+            import asyncio
+            import edge_tts
+
+            async def _synthesize():
+                comm = edge_tts.Communicate(text, voice="en-US-AriaNeural", rate="+5%")
+                await comm.save(tmp_path)
+
+            asyncio.run(_synthesize())
+        else:
+            response = _get_tts_client().audio.speech.create(
+                model="tts-1",
+                voice="nova",
+                input=text,
+                speed=1.05,
+            )
+            with open(tmp_path, "wb") as f:
+                f.write(response.content)
 
         # Analyze amplitude for lip sync BEFORE playback starts
         if state.gui:

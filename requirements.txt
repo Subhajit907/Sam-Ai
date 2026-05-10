@@ -1,4 +1,6 @@
 openai
+edge-tts
+ollama
 SpeechRecognition
 pyaudio
 pyttsx3

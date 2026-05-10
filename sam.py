@@ -5,6 +5,8 @@ A voice-controlled AI assistant with a Jarvis-like GUI.
 
 import threading
 from modules import state
+from modules.config import is_configured
+from modules.setup_dialog import show_setup_dialog
 from modules.gui import AliaGUI
 from modules.voice import speak, listen, _calibrate
 from modules.commands import handle_command
@@ -21,6 +23,10 @@ def voice_loop():
 
 
 if __name__ == "__main__":
+    # Show first-run setup if mode hasn't been chosen yet
+    if not is_configured():
+        show_setup_dialog()
+
     # Create and register GUI before starting voice loop
     gui = AliaGUI()
     state.gui = gui

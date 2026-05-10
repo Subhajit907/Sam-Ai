@@ -1,20 +1,9 @@
-"""AI Module - Handles OpenAI API interactions"""
+"""AI Module — routes chat/vision to Ollama (free) or OpenAI (paid) based on config."""
 
-from openai import OpenAI
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
-# Initialize OpenAI client
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-
-if not OPENAI_API_KEY:
-    print("Error: OPENAI_API_KEY environment variable is not set!")
-    print("Please add your API key to the .env file")
-    exit(1)
-
-client = OpenAI(api_key=OPENAI_API_KEY)
 
 SYSTEM_PROMPT = """You are Alia, a friendly and natural AI assistant. Talk like a real person — conversational, warm, and concise.
 
@@ -37,10 +26,15 @@ Your job:
 - Keep answers short and conversational, spoken like a real person
 - Never use bullet points or headers — just talk naturally"""
 
-MAX_HISTORY = 20  # keep last 20 messages to avoid token bloat
+MAX_HISTORY = 20
 
-# Conversation history — seeded from persistent DB on first use
 _conversation_history = None
+
+# ── Lazy-init clients ─────────────────────────────────────────────────────────
+
+def _openai_client():
+    from openai import OpenAI
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
 
 
 def _get_history():
@@ -55,20 +49,63 @@ def _get_history():
     return _conversation_history
 
 
-def ask_openai(prompt):
-    """Send a prompt to OpenAI and get a response, maintaining conversation history."""
+# ── Free backend (Ollama) ─────────────────────────────────────────────────────
+
+def _ask_ollama(prompt: str) -> str:
     from modules.memory import save_chat
     history = _get_history()
-
     history.append({"role": "user", "content": prompt})
     save_chat("user", prompt)
-
-    # Trim history if too long (keep system prompt + last MAX_HISTORY messages)
     if len(history) > MAX_HISTORY + 1:
-        history[:] = [history[0]] + history[-(MAX_HISTORY):]
-
+        history[:] = [history[0]] + history[-MAX_HISTORY:]
     try:
-        response = client.chat.completions.create(
+        import ollama
+        response = ollama.chat(model="llama3.2", messages=history)
+        reply = response.message.content or ""
+        history.append({"role": "assistant", "content": reply})
+        save_chat("assistant", reply)
+        return reply
+    except Exception as e:
+        print(f"[Ollama] Error: {e}")
+        return "Ollama isn't responding. Make sure it's running — try: ollama serve"
+
+
+def _ask_ollama_vision(prompt: str, b64_image: str) -> str:
+    from modules.memory import save_chat
+    history = _get_history()
+    history.append({"role": "user", "content": prompt})
+    save_chat("user", prompt)
+    if len(history) > MAX_HISTORY + 1:
+        history[:] = [history[0]] + history[-MAX_HISTORY:]
+    try:
+        import ollama
+        response = ollama.chat(
+            model="llava",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT_VISION},
+                {"role": "user", "content": prompt, "images": [b64_image]},
+            ],
+        )
+        reply = response.message.content or ""
+        history.append({"role": "assistant", "content": reply})
+        save_chat("assistant", reply)
+        return reply
+    except Exception as e:
+        print(f"[Ollama vision] Error: {e}")
+        return _ask_ollama(prompt)
+
+
+# ── Paid backend (OpenAI) ─────────────────────────────────────────────────────
+
+def _ask_openai_paid(prompt: str) -> str:
+    from modules.memory import save_chat
+    history = _get_history()
+    history.append({"role": "user", "content": prompt})
+    save_chat("user", prompt)
+    if len(history) > MAX_HISTORY + 1:
+        history[:] = [history[0]] + history[-MAX_HISTORY:]
+    try:
+        response = _openai_client().chat.completions.create(
             model="gpt-4o",
             messages=history,  # type: ignore[arg-type]
             temperature=0.85,
@@ -79,44 +116,28 @@ def ask_openai(prompt):
         save_chat("assistant", reply)
         return reply
     except Exception as e:
-        print(f"Error communicating with OpenAI: {e}")
+        print(f"[OpenAI] Error: {e}")
         return "Sorry, something went wrong on my end."
 
 
-def ask_openai_with_vision(prompt: str, b64_image: str) -> str:
-    """
-    Send a prompt + camera frame to GPT-4o and get a response.
-    Uses the vision-aware system prompt and maintains the same conversation history.
-    """
+def _ask_openai_vision_paid(prompt: str, b64_image: str) -> str:
     from modules.memory import save_chat
     history = _get_history()
-
-    # Swap system prompt to vision-aware version for this call
     vision_history = [{"role": "system", "content": SYSTEM_PROMPT_VISION}] + history[1:]
-
     user_msg = {
         "role": "user",
         "content": [
             {"type": "text", "text": prompt},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{b64_image}",
-                    "detail": "low",
-                },
-            },
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}", "detail": "low"}},
         ],
     }
     vision_history.append(user_msg)
     save_chat("user", prompt)
-
-    # Also append text-only version to the real history so context is preserved
     history.append({"role": "user", "content": prompt})
     if len(history) > MAX_HISTORY + 1:
-        history[:] = [history[0]] + history[-(MAX_HISTORY):]
-
+        history[:] = [history[0]] + history[-MAX_HISTORY:]
     try:
-        response = client.chat.completions.create(
+        response = _openai_client().chat.completions.create(
             model="gpt-4o",
             messages=vision_history,  # type: ignore[arg-type]
             temperature=0.85,
@@ -127,47 +148,69 @@ def ask_openai_with_vision(prompt: str, b64_image: str) -> str:
         save_chat("assistant", reply)
         return reply
     except Exception as e:
-        print(f"Vision API error: {e}")
-        return ask_openai(prompt)   # graceful fallback to text-only
+        print(f"[OpenAI vision] Error: {e}")
+        return _ask_openai_paid(prompt)
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def ask_openai(prompt: str) -> str:
+    """Main chat call — routes to Ollama or OpenAI based on config."""
+    from modules.config import get_mode
+    if get_mode() == "free":
+        return _ask_ollama(prompt)
+    return _ask_openai_paid(prompt)
+
+
+def ask_openai_with_vision(prompt: str, b64_image: str) -> str:
+    """Vision call — routes to LLaVA or GPT-4o Vision based on config."""
+    from modules.config import get_mode
+    if get_mode() == "free":
+        return _ask_ollama_vision(prompt, b64_image)
+    return _ask_openai_vision_paid(prompt, b64_image)
 
 
 def reset_conversation():
-    """Clear conversation history (start fresh)."""
     global _conversation_history
     _conversation_history = [{"role": "system", "content": SYSTEM_PROMPT}]
 
 
-def generate_game_code(project_name, game_type):
-    """Generate game code using OpenAI"""
+def generate_game_code(project_name: str, game_type: str) -> str | None:
+    """Generate pygame game code — uses Ollama or OpenAI based on config."""
+    from modules.config import get_mode
+    prompt = (
+        f"Create a complete Python {game_type} game using pygame.\n"
+        f"Project name: {project_name}\n\n"
+        "Generate clean, well-commented code with:\n"
+        "1. Main game class\n2. Game loop\n3. Collision detection\n"
+        "4. Score system\n5. Game over screen\n\n"
+        "Make it fun and playable. Return only the Python code, no explanations."
+    )
     try:
-        prompt = f"""Create a complete Python {game_type} game using pygame. 
-        Project name: {project_name}
-        
-        Generate clean, well-commented code with:
-        1. Main game class
-        2. Game loop
-        3. Collision detection
-        4. Score system
-        5. Game over screen
-        
-        Make it fun and playable. Return only the Python code, no explanations."""
-        
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are an expert Python game developer. Generate complete, working game code."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        
-        game_code = response.choices[0].message.content or ""
+        if get_mode() == "free":
+            import ollama
+            response = ollama.chat(
+                model="llama3.2",
+                messages=[
+                    {"role": "system", "content": "You are an expert Python game developer. Generate complete, working game code."},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            game_code = response.message.content or ""
+        else:
+            response = _openai_client().chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are an expert Python game developer. Generate complete, working game code."},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            game_code = response.choices[0].message.content or ""
 
-        # Clean up code if it has markdown markers
         if "```python" in game_code:
             game_code = game_code.split("```python")[1].split("```")[0]
         elif "```" in game_code:
             game_code = game_code.split("```")[1].split("```")[0]
-        
         return game_code
     except Exception as e:
         print(f"Error generating game code: {e}")
