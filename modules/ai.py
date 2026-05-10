@@ -1,9 +1,12 @@
 """AI Module — routes chat/vision to Ollama (free) or OpenAI (paid) based on config."""
 
 import os
+import threading
 from dotenv import load_dotenv
 
 load_dotenv()
+
+_llava_pulling = False   # prevent duplicate background pulls
 
 SYSTEM_PROMPT = """You are Alia, a friendly and natural AI assistant. Talk like a real person — conversational, warm, and concise.
 
@@ -91,8 +94,34 @@ def _ask_ollama_vision(prompt: str, b64_image: str) -> str:
         save_chat("assistant", reply)
         return reply
     except Exception as e:
-        print(f"[Ollama vision] Error: {e}")
+        err = str(e)
+        print(f"[Ollama vision] Error: {err}")
+        if "404" in err or "not found" in err.lower():
+            _pull_llava_background()
+            return "My vision model isn't downloaded yet — I'm pulling it in the background right now. Give me a couple of minutes and try again!"
         return _ask_ollama(prompt)
+
+
+def _pull_llava_background():
+    global _llava_pulling
+    if _llava_pulling:
+        return
+    _llava_pulling = True
+
+    def _pull():
+        global _llava_pulling
+        print("[Ollama] Pulling llava in background...")
+        try:
+            import subprocess
+            subprocess.run(["ollama", "pull", "llava"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("[Ollama] llava pull complete.")
+        except Exception as e:
+            print(f"[Ollama] llava pull failed: {e}")
+        finally:
+            _llava_pulling = False
+
+    threading.Thread(target=_pull, daemon=True).start()
 
 
 # ── Paid backend (OpenAI) ─────────────────────────────────────────────────────

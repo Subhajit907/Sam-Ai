@@ -20,26 +20,32 @@ from modules.projects import (
 # Track open browser instance
 open_browser = None
 
+# Pending music request — set when Alia asks "what song?" and waits for name
+_pending_music = False
+
 # Path to yt-dlp inside the venv
 _YT_DLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
 
 
 def play_youtube_music(query):
     """Find the top YouTube result for query and open it directly in browser."""
-    speak(f"Finding {query} on YouTube, one second.")
+    speak(f"Playing {query} on YouTube.")
     try:
-        result = subprocess.run(
-            [_YT_DLP, f"ytsearch1:{query}", "--print", "webpage_url", "--no-download"],
-            capture_output=True, text=True, timeout=15
-        )
-        url = result.stdout.strip()
-        if url.startswith("https://"):
-            webbrowser.open(url)
-            speak(f"Playing {query} on YouTube!")
-        else:
-            speak("Sorry, I couldn't find that song on YouTube.")
+        if os.path.exists(_YT_DLP):
+            result = subprocess.run(
+                [_YT_DLP, f"ytsearch1:{query}", "--print", "webpage_url", "--no-download"],
+                capture_output=True, text=True, timeout=15
+            )
+            url = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+            if url.startswith("https://"):
+                webbrowser.open(url)
+                return
+        # Fallback: open YouTube search directly
+        import urllib.parse
+        webbrowser.open(f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}")
     except Exception as e:
-        speak("Something went wrong while searching YouTube.")
+        import urllib.parse
+        webbrowser.open(f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}")
         print(f"yt-dlp error: {e}")
 
 
@@ -343,6 +349,7 @@ def _handle_send_followup():
 
 def handle_command(command):
     """Process and execute voice commands"""
+    global _pending_music
     cmd = command.lower()
 
     _camera_words = ("camera", "video")
@@ -427,15 +434,20 @@ def handle_command(command):
         speak("Opening VS Code")
 
     elif "play" in cmd or ("open" in cmd and any(w in cmd for w in ["music", "song", "track"]) and "youtube" in cmd):
-        # Extract the song/artist — strip all filler words
+        global _pending_music
+        # Strip filler words — keep only the actual song/artist name
         query = re.sub(
-            r"\b(play|open|music|song|track|for me|on youtube|in youtube|youtube|please|a|the|some|and|me|i want|to|you|want)\b",
+            r"\b(play|open|music|song|songs|track|for me|on youtube|in youtube|"
+            r"youtube|please|a|the|some|and|me|i|i want|to|you|want|can|for|"
+            r"it|that|this|something|any|just|now|up|put|start|gonna|go|in)\b",
             " ", cmd, flags=re.IGNORECASE
         )
         query = re.sub(r"\s+", " ", query).strip()
-        if not query:
+        if not query or len(query) < 2:
+            _pending_music = True
             speak("Sure! What song or artist would you like me to play?")
         else:
+            _pending_music = False
             play_youtube_music(query)
 
     elif "google" in cmd and ("search" in cmd or "find" in cmd):
@@ -594,6 +606,12 @@ def handle_command(command):
         _handle_send_followup()
 
     else:
+        # If Alia asked "what song?" on the previous turn, treat this as the song name
+        if _pending_music:
+            _pending_music = False
+            play_youtube_music(command)
+            return
+
         from modules import vision
         from modules import state
 
