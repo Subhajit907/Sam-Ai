@@ -122,79 +122,87 @@ class AliaGUI:
                  font=("Courier", 10), fg=WHITE, bg=BG,
                  wraplength=740, justify="center").pack(pady=(0, 6))
 
-        # ── Button bar ────────────────────────────────────────────────────
-        btn_frame = tk.Frame(self.root, bg=BG)
-        btn_frame.pack(pady=(0, 12))
+        # ── Control panel ─────────────────────────────────────────────────
+        ctrl = tk.Frame(self.root, bg=BG)
+        ctrl.pack(pady=(4, 10))
 
-        self._video_btn = tk.Button(
-            btn_frame, text="[ VIDEO ]",
-            font=("Courier", 10, "bold"),
-            fg=GLOW, bg=BG, activebackground=DIM,
-            activeforeground=BRIGHT, relief="flat", bd=0,
-            cursor="hand2", command=self._toggle_video,
-        )
-        self._video_btn.pack(side="left", padx=20)
+        _BTN_BG  = "#0a1628"
+        _BTN_BDR = "#1a3a5c"
+        _BTN_ACT = "#112240"
 
-        self._avatar_btn = tk.Button(
-            btn_frame, text="[ AVATAR MODE ]",
-            font=("Courier", 10, "bold"),
-            fg=GLOW, bg=BG, activebackground=DIM,
-            activeforeground=BRIGHT, relief="flat", bd=0,
-            cursor="hand2", command=self._toggle_avatar,
-        )
-        self._avatar_btn.pack(side="left", padx=20)
+        def _styled_btn(parent, text, command, fg=GLOW, bg=_BTN_BG, bdr=_BTN_BDR):
+            f = tk.Frame(parent, bg=bdr, padx=1, pady=1)
+            b = tk.Button(
+                f, text=text, font=("Courier", 9, "bold"),
+                fg=fg, bg=bg, activebackground=_BTN_ACT, activeforeground=BRIGHT,
+                relief="flat", bd=0, padx=14, pady=6, cursor="hand2",
+                command=command,
+            )
+            b.pack()
+            return f, b
 
-        # ── Mode switcher ─────────────────────────────────────────────────
+        # Row 1 — main controls
+        row1 = tk.Frame(ctrl, bg=BG)
+        row1.pack(pady=(0, 6))
+
+        vf, self._video_btn = _styled_btn(row1, "  VIDEO  ", self._toggle_video)
+        vf.pack(side="left", padx=6)
+
+        af, self._avatar_btn = _styled_btn(row1, "  AVATAR  ", self._toggle_avatar)
+        af.pack(side="left", padx=6)
+
+        # Mode dropdown — styled as a bordered card
         from modules.config import get_mode
         _initial = "Free (Ollama)" if get_mode() == "free" else "Paid (OpenAI)"
         self._mode_var = tk.StringVar(value=_initial)
 
-        tk.Label(btn_frame, text="MODE:", font=("Courier", 8),
-                 fg=TEXT_DIM, bg=BG).pack(side="left", padx=(20, 2))
-
-        mode_menu = tk.OptionMenu(btn_frame, self._mode_var,
+        mode_wrap = tk.Frame(row1, bg=_BTN_BDR, padx=1, pady=1)
+        mode_wrap.pack(side="left", padx=6)
+        mode_inner = tk.Frame(mode_wrap, bg=_BTN_BG)
+        mode_inner.pack()
+        tk.Label(mode_inner, text="MODE", font=("Courier", 7),
+                 fg=TEXT_DIM, bg=_BTN_BG).pack(side="left", padx=(10, 2), pady=6)
+        mode_menu = tk.OptionMenu(mode_inner, self._mode_var,
                                   "Free (Ollama)", "Paid (OpenAI)",
                                   command=self._on_mode_change)
         mode_menu.configure(
-            font=("Courier", 9, "bold"), fg=GLOW, bg=BG,
-            activebackground=DIM, activeforeground=BRIGHT,
+            font=("Courier", 9, "bold"), fg=GLOW, bg=_BTN_BG,
+            activebackground=_BTN_ACT, activeforeground=BRIGHT,
             highlightthickness=0, relief="flat", bd=0,
-            indicatoron=True, cursor="hand2",
+            padx=6, pady=4, cursor="hand2",
         )
         mode_menu["menu"].configure(
-            font=("Courier", 9), fg=GLOW, bg="#0d1a2e",
+            font=("Courier", 9), fg=GLOW, bg="#0a1628",
             activebackground=RING2, activeforeground=BRIGHT,
         )
-        mode_menu.pack(side="left")
+        mode_menu.pack(side="left", padx=(0, 6))
 
-        # ── Document upload bar ───────────────────────────────────────────
-        doc_frame = tk.Frame(self.root, bg=BG)
-        doc_frame.pack(pady=(0, 10))
+        # Row 2 — document upload
+        row2 = tk.Frame(ctrl, bg=BG)
+        row2.pack()
 
-        self._upload_btn = tk.Button(
-            doc_frame, text="[ UPLOAD DOCUMENT ]",
-            font=("Courier", 9, "bold"),
-            fg=GLOW, bg=BG, activebackground=DIM,
-            activeforeground=BRIGHT, relief="flat", bd=0,
-            cursor="hand2", command=self._upload_document,
+        uf, self._upload_btn = _styled_btn(
+            row2, "  ⬆  UPLOAD DOCUMENT  ", self._upload_document,
+            fg="#00cc77", bg="#071a10", bdr="#0a3320",
         )
-        self._upload_btn.pack(side="left", padx=(20, 8))
+        uf.pack(side="left", padx=6)
 
+        # Doc badge (hidden until a doc is loaded)
+        self._doc_badge = tk.Frame(row2, bg="#0a1628", padx=1, pady=1)
         self._doc_name_var = tk.StringVar(value="")
         self._doc_label = tk.Label(
-            doc_frame, textvariable=self._doc_name_var,
-            font=("Courier", 9), fg=BRIGHT, bg=BG,
+            self._doc_badge, textvariable=self._doc_name_var,
+            font=("Courier", 8), fg=BRIGHT, bg="#0a1628", padx=10, pady=5,
         )
         self._doc_label.pack(side="left")
-
         self._clear_doc_btn = tk.Button(
-            doc_frame, text="[X]",
-            font=("Courier", 9, "bold"),
-            fg="#ff4444", bg=BG, activebackground=DIM,
-            relief="flat", bd=0, cursor="hand2",
+            self._doc_badge, text=" × ",
+            font=("Helvetica", 10, "bold"),
+            fg="#ff5555", bg="#0a1628", activebackground="#1a0a0a",
+            relief="flat", bd=0, padx=4, pady=4, cursor="hand2",
             command=self._clear_document,
         )
-        # hidden until a doc is loaded
+        self._clear_doc_btn.pack(side="left")
 
     # ------------------------------------------------------------------ #
     #  Document upload
@@ -220,8 +228,9 @@ class AliaGUI:
             return
 
         filename = os.path.basename(path)
-        self._doc_name_var.set(f"DOC: {filename}")
-        self._clear_doc_btn.pack(side="left", padx=(6, 0))
+        short = filename if len(filename) <= 28 else filename[:25] + "..."
+        self._doc_name_var.set(f"  {short}  ")
+        self._doc_badge.pack(side="left", padx=6)
         self.status_var.set(f"Reading {filename}...")
         self.root.update_idletasks()
 
@@ -248,7 +257,7 @@ class AliaGUI:
         from modules.ai import clear_document_context
         clear_document_context()
         self._doc_name_var.set("")
-        self._clear_doc_btn.pack_forget()
+        self._doc_badge.pack_forget()
         self.status_var.set("Document cleared.")
         self.root.after(2000, lambda: self.status_var.set("STANDBY"))
 
@@ -284,12 +293,12 @@ class AliaGUI:
     def _toggle_avatar(self):
         self._avatar_mode = not self._avatar_mode
         if self._avatar_mode:
-            self._avatar_btn.config(fg=BRIGHT, text="[ AVATAR ON ]")
+            self._avatar_btn.config(fg=BRIGHT, bg="#112240", text="  AVATAR ON  ")
             self._blink_progress = 0.0
             self._blink_phase    = "wait"
             self._blink_wait     = 0
         else:
-            self._avatar_btn.config(fg=GLOW, text="[ AVATAR MODE ]")
+            self._avatar_btn.config(fg=GLOW, bg="#0a1628", text="  AVATAR  ")
 
     # ------------------------------------------------------------------ #
     #  Photo avatar helpers
@@ -1064,7 +1073,7 @@ class AliaGUI:
             return
 
         self._video_active = True
-        self._video_btn.config(fg=BRIGHT, text="[ VIDEO ON ]")
+        self._video_btn.config(fg=BRIGHT, bg="#112240", text="  VIDEO ON  ")
         self.set_state("idle", "Camera is on — show me something and ask!")
 
         self._video_win = tk.Toplevel(self.root)
@@ -1102,7 +1111,7 @@ class AliaGUI:
         from modules import vision
         self._video_active = False
         vision.stop_camera()
-        self._video_btn.config(fg=GLOW, text="[ VIDEO ]")
+        self._video_btn.config(fg=GLOW, bg="#0a1628", text="  VIDEO  ")
         self.set_state("idle", "Camera off.")
         if self._video_win:
             self._video_win.destroy()
