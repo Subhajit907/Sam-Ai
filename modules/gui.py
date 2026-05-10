@@ -51,8 +51,17 @@ class AliaGUI:
         self.root = tk.Tk()
         self.root.title("Alia AI")
         self.root.configure(bg=BG)
-        self.root.geometry("820x640")
-        self.root.resizable(False, False)
+
+        # Size to 90% of screen, centered, minimum 820×640
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        w  = max(820, min(1100, int(sw * 0.90)))
+        h  = max(640, min(780,  int(sh * 0.88)))
+        x  = (sw - w) // 2
+        y  = (sh - h) // 2
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+        self.root.minsize(820, 640)
+        self.root.resizable(True, True)
 
         self.state     = "idle"
         self.angle     = 0.0
@@ -1101,21 +1110,32 @@ class AliaGUI:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(frame_rgb).resize((400, 300))
                 photo = ImageTk.PhotoImage(img)
-                self._video_label.config(image=photo)
-                self._video_label.image = photo  # type: ignore[attr-defined]
+                if self._video_label.winfo_exists():
+                    self._video_label.config(image=photo)
+                    self._video_label.image = photo  # type: ignore[attr-defined]
         except Exception:
             pass
-        self.root.after(66, self._refresh_video_frame)   # ~15 fps
+        if self._video_active:
+            self.root.after(66, self._refresh_video_frame)   # ~15 fps
 
     def _stop_video(self):
+        if not self._video_active:
+            return   # guard against double-call
         from modules import vision
         self._video_active = False
         vision.stop_camera()
-        self._video_btn.config(fg=GLOW, bg="#0a1628", text="  VIDEO  ")
+        try:
+            self._video_btn.config(fg=GLOW, bg="#0a1628", text="  VIDEO  ")
+        except Exception:
+            pass
         self.set_state("idle", "Camera off.")
-        if self._video_win:
-            self._video_win.destroy()
-            self._video_win = None
+        win = self._video_win
+        self._video_win = None
+        if win:
+            try:
+                win.destroy()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------ #
     #  Lip sync API (called from voice thread)
