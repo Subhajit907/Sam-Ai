@@ -18,6 +18,7 @@ LANGUAGES: dict[str, tuple[str, str]] = {
     "Hindi":      ("hi", "hi-IN-SwaraNeural"),
     "Russian":    ("ru", "ru-RU-SvetlanaNeural"),
     "Dutch":      ("nl", "nl-NL-ColetteNeural"),
+    "Bengali":    ("bn", "bn-IN-TanishaaNeural"),
 }
 
 LANG_NAMES = list(LANGUAGES.keys())

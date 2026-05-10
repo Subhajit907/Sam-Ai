@@ -87,6 +87,10 @@ class AliaGUI:
         # PIL avatar frame cache (prevent GC)
         self._tk_avatar_frame = None
 
+        # Glow layer caches — built once, reused every frame (avoid repeated GaussianBlur)
+        self._avatar_gl_base_cache  = None   # wide bloom (radius=26)
+        self._avatar_gl2_base_cache = None   # skull-edge glow (radius=9)
+
         # Lip sync
         self._lip_sync_data  = []    # normalized amplitude per 30 ms frame
         self._lip_sync_start = 0.0   # time.time() when playback began
@@ -112,6 +116,15 @@ class AliaGUI:
                                    fg=GLOW, bg=BG)
         self.status_dot.pack(side="right")
 
+        self._settings_win   = None   # floating settings panel reference
+        self._settings_btn_w = tk.Button(
+            top, text="⚙  Settings", font=("Courier", 8),
+            fg=TEXT_DIM, bg=BG, activebackground=BG, activeforeground=GLOW,
+            relief="flat", bd=0, padx=8, pady=2, cursor="hand2",
+            command=self._toggle_settings_panel,
+        )
+        self._settings_btn_w.pack(side="right", padx=(0, 10))
+
         # ── Canvas ────────────────────────────────────────────────────────
         self.canvas = tk.Canvas(self.root, width=820, height=400,
                                 bg=BG, highlightthickness=0)
@@ -126,10 +139,7 @@ class AliaGUI:
                  font=("Courier", 11, "bold"), fg=GLOW, bg=BG).pack(pady=(10, 2))
 
         # ── Conversation text ─────────────────────────────────────────────
-        self.text_var = tk.StringVar(value="Say something to Alia...")
-        tk.Label(self.root, textvariable=self.text_var,
-                 font=("Courier", 10), fg=WHITE, bg=BG,
-                 wraplength=740, justify="center").pack(pady=(0, 6))
+        self.text_var = tk.StringVar(value="")   # kept for compat; not shown in UI
 
         # ── Control panel ─────────────────────────────────────────────────
         ctrl = tk.Frame(self.root, bg=BG)
@@ -150,51 +160,43 @@ class AliaGUI:
             b.pack()
             return f, b
 
-        # Row 1 — main controls
+        # Single button row — all controls inline
         row1 = tk.Frame(ctrl, bg=BG)
-        row1.pack(pady=(0, 6))
+        row1.pack(pady=(0, 4))
 
         vf, self._video_btn = _styled_btn(row1, "  VIDEO  ", self._toggle_video)
-        vf.pack(side="left", padx=6)
+        vf.pack(side="left", padx=4)
 
         af, self._avatar_btn = _styled_btn(row1, "  AVATAR  ", self._toggle_avatar)
-        af.pack(side="left", padx=6)
+        af.pack(side="left", padx=4)
 
-        # Mode dropdown — styled as a bordered card
+        # Mode var kept for _on_mode_change; actual switcher lives in Settings panel
         from modules.config import get_mode
         _initial = "Free (Ollama)" if get_mode() == "free" else "Paid (OpenAI)"
         self._mode_var = tk.StringVar(value=_initial)
 
-        mode_wrap = tk.Frame(row1, bg=_BTN_BDR, padx=1, pady=1)
-        mode_wrap.pack(side="left", padx=6)
-        mode_inner = tk.Frame(mode_wrap, bg=_BTN_BG)
-        mode_inner.pack()
-        tk.Label(mode_inner, text="MODE", font=("Courier", 7),
-                 fg=TEXT_DIM, bg=_BTN_BG).pack(side="left", padx=(10, 2), pady=6)
-        mode_menu = tk.OptionMenu(mode_inner, self._mode_var,
-                                  "Free (Ollama)", "Paid (OpenAI)",
-                                  command=self._on_mode_change)
-        mode_menu.configure(
-            font=("Courier", 9, "bold"), fg=GLOW, bg=_BTN_BG,
-            activebackground=_BTN_ACT, activeforeground=BRIGHT,
-            highlightthickness=0, relief="flat", bd=0,
-            padx=6, pady=4, cursor="hand2",
-        )
-        mode_menu["menu"].configure(
-            font=("Courier", 9), fg=GLOW, bg="#0a1628",
-            activebackground=RING2, activeforeground=BRIGHT,
-        )
-        mode_menu.pack(side="left", padx=(0, 6))
-
-        # Row 2 — document upload
-        row2 = tk.Frame(ctrl, bg=BG)
-        row2.pack()
-
+        # Upload document button — same row
         uf, self._upload_btn = _styled_btn(
-            row2, "  ⬆  UPLOAD DOCUMENT  ", self._upload_document,
+            row1, "  ⬆  UPLOAD  ", self._upload_document,
             fg="#00cc77", bg="#071a10", bdr="#0a3320",
         )
-        uf.pack(side="left", padx=6)
+        uf.pack(side="left", padx=4)
+
+        # Translator button — same row
+        _TRANS_BG  = "#0d0a1a"
+        _TRANS_BDR = "#2a1a4a"
+        _TRANS_FG  = "#bb88ff"
+        _TRANS_ACT = "#1a0d2e"
+
+        tf, self._trans_btn = _styled_btn(
+            row1, "  ⇄  TRANSLATOR  ", self._toggle_translator,
+            fg=_TRANS_FG, bg=_TRANS_BG, bdr=_TRANS_BDR,
+        )
+        tf.pack(side="left", padx=4)
+
+        # Expansion row — doc badge and translator panel appear here when active
+        row2 = tk.Frame(ctrl, bg=BG)
+        row2.pack()
 
         # Doc badge (hidden until a doc is loaded)
         self._doc_badge = tk.Frame(row2, bg="#0a1628", padx=1, pady=1)
@@ -213,25 +215,10 @@ class AliaGUI:
         )
         self._clear_doc_btn.pack(side="left")
 
-        # Row 3 — translator
-        row3 = tk.Frame(ctrl, bg=BG)
-        row3.pack(pady=(6, 0))
-
-        _TRANS_BG  = "#0d0a1a"
-        _TRANS_BDR = "#2a1a4a"
-        _TRANS_FG  = "#bb88ff"
-        _TRANS_ACT = "#1a0d2e"
-
-        tf, self._trans_btn = _styled_btn(
-            row3, "  ⇄  TRANSLATOR  ", self._toggle_translator,
-            fg=_TRANS_FG, bg=_TRANS_BG, bdr=_TRANS_BDR,
-        )
-        tf.pack(side="left", padx=6)
-
         # Language selector panel (shown only when translator is active)
         # Uses ttk.Combobox instead of OptionMenu — avoids macOS native-menu
         # freeze that occurs when the animation after() loop runs every 30 ms.
-        self._trans_panel = tk.Frame(row3, bg=BG)
+        self._trans_panel = tk.Frame(row2, bg=BG)
 
         from tkinter import ttk
         from modules.translator import LANG_NAMES
@@ -357,7 +344,7 @@ class AliaGUI:
             to_lang   = self._to_lang_var.get()
             trans_mod.set_languages(from_lang, to_lang)
             self._trans_btn.config(fg="#66d9ff", bg="#0d182a", text="  ⇄  TRANSLATING  ")
-            self._trans_panel.pack(side="left", padx=(4, 0))
+            self._trans_panel.pack(side="left", padx=4)
             self.status_var.set(f"Translating: {from_lang} → {to_lang}")
             self.root.after(3000, lambda: self.status_var.set("STANDBY"))
 
@@ -371,6 +358,103 @@ class AliaGUI:
         trans_mod.set_languages(from_lang, to_lang)
         self.status_var.set(f"Translating: {from_lang} → {to_lang}")
         self.root.after(2000, lambda: self.status_var.set("STANDBY"))
+
+    # ------------------------------------------------------------------ #
+    #  Settings panel (floating, left-anchored)
+    # ------------------------------------------------------------------ #
+    def _toggle_settings_panel(self):
+        if self._settings_win and self._settings_win.winfo_exists():
+            self._settings_win.destroy()
+            self._settings_win = None
+            self._settings_btn_w.config(fg=TEXT_DIM)
+            return
+
+        self._settings_btn_w.config(fg=GLOW)
+
+        win = tk.Toplevel(self.root)
+        win.title("")
+        win.overrideredirect(True)          # no title bar — floating card feel
+        win.configure(bg="#0a1628")
+        win.attributes("-topmost", True)
+
+        # Position: left side of main window, just below top bar
+        self.root.update_idletasks()
+        rx = self.root.winfo_rootx()
+        ry = self.root.winfo_rooty()
+        win.geometry(f"220x180+{rx + 14}+{ry + 50}")
+
+        # Card border frame
+        border = tk.Frame(win, bg="#1a3a5c", padx=1, pady=1)
+        border.pack(fill="both", expand=True)
+        inner = tk.Frame(border, bg="#04040f")
+        inner.pack(fill="both", expand=True, padx=1, pady=1)
+
+        # Header
+        hdr = tk.Frame(inner, bg="#071220")
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="  ⚙  SETTINGS", font=("Courier", 9, "bold"),
+                 fg=GLOW, bg="#071220", pady=8).pack(side="left")
+        tk.Button(hdr, text="×", font=("Helvetica", 11, "bold"),
+                  fg="#ff5555", bg="#071220", activebackground="#1a0a0a",
+                  relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+                  command=lambda: self._toggle_settings_panel()).pack(side="right")
+
+        tk.Frame(inner, bg="#1a3a5c", height=1).pack(fill="x")
+
+        # MODEL section
+        tk.Label(inner, text="MODEL", font=("Courier", 7),
+                 fg=TEXT_DIM, bg="#04040f", pady=(8)).pack(anchor="w", padx=14)
+
+        btn_area = tk.Frame(inner, bg="#04040f")
+        btn_area.pack(fill="x", padx=12, pady=(2, 10))
+
+        from modules.config import get_mode
+
+        def _pick_free():
+            self._on_mode_change("Free (Ollama)")
+            _refresh()
+
+        def _pick_paid():
+            self._on_mode_change("Paid (OpenAI)")
+            _refresh()
+
+        self._s_free_btn = tk.Button(
+            btn_area, text="Free  (Ollama)", font=("Courier", 8, "bold"),
+            relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            command=_pick_free,
+        )
+        self._s_free_btn.pack(fill="x", pady=(0, 4))
+
+        self._s_paid_btn = tk.Button(
+            btn_area, text="Paid  (OpenAI)", font=("Courier", 8, "bold"),
+            relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            command=_pick_paid,
+        )
+        self._s_paid_btn.pack(fill="x")
+
+        def _refresh():
+            mode = get_mode()
+            if mode == "free":
+                self._s_free_btn.config(fg=BRIGHT, bg="#112240")
+                self._s_paid_btn.config(fg=TEXT_DIM, bg="#0a1628")
+            else:
+                self._s_free_btn.config(fg=TEXT_DIM, bg="#0a1628")
+                self._s_paid_btn.config(fg=BRIGHT, bg="#112240")
+
+        _refresh()
+
+        # Close when clicking outside
+        def _on_focus_out(e):
+            if self._settings_win and self._settings_win.winfo_exists():
+                try:
+                    if not str(e.widget).startswith(str(win)):
+                        self._toggle_settings_panel()
+                except Exception:
+                    pass
+
+        win.bind("<FocusOut>", _on_focus_out)
+        win.focus_set()
+        self._settings_win = win
 
     # ------------------------------------------------------------------ #
     #  Mode switcher
@@ -393,6 +477,9 @@ class AliaGUI:
         else:
             save_config(new_mode)
 
+        # Keep mode_var in sync (used elsewhere in the codebase)
+        self._mode_var.set("Free (Ollama)" if new_mode == "free" else "Paid (OpenAI)")
+
         # Confirm switch in the status label
         label = "Free Mode (Ollama)" if new_mode == "free" else "Paid Mode (OpenAI)"
         self.status_var.set(f"Switched to {label}")
@@ -408,8 +495,12 @@ class AliaGUI:
             self._blink_progress = 0.0
             self._blink_phase    = "wait"
             self._blink_wait     = 0
+            # Caches are built lazily on first draw — no action needed here
         else:
             self._avatar_btn.config(fg=GLOW, bg="#0a1628", text="  AVATAR  ")
+            # Release glow cache memory when avatar is off
+            self._avatar_gl_base_cache  = None
+            self._avatar_gl2_base_cache = None
 
     # ------------------------------------------------------------------ #
     #  Photo avatar helpers
@@ -689,28 +780,16 @@ class AliaGUI:
             (cx - 42,  cy - fh + 2),
         ]
 
-        # ── 1. Wide atmospheric bloom ─────────────────────────────────────
-        gl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        gd = ImageDraw.Draw(gl)
-        for off, alp in [(96, 6), (72, 15), (46, 32), (22, 58)]:
-            gd.ellipse([cx-fw-off, cy-fh-int(off*0.7),
-                        cx+fw+off, cy+fh+int(off*0.7)],
-                       fill=(0, 138, 228, alp))
-        gd.polygon([
-            (cx-fw-136, cy-fh-24), (cx+fw+136, cy-fh-24),
-            (cx+fw+98,  H),        (cx-fw-98,  H),
-        ], fill=(0, 44, 110, 11))
-        for ex in (cx-36, cx+36):
-            gd.ellipse([ex-40, ey-30, ex+40, ey+30], fill=(0, 150, 255, 65))
+        # ── 1. Wide atmospheric bloom (cached — GaussianBlur radius=26 runs once) ──
+        if self._avatar_gl_base_cache is None:
+            self._build_gl_caches()
+        img = Image.new("RGBA", (W, H), (4, 4, 15, 255))
+        img.alpha_composite(self._avatar_gl_base_cache)
+        d = ImageDraw.Draw(img)
+        # Speaking mouth bloom added per-frame directly (no blur — fast, subtle)
         if self.state == "speaking":
             oh = max(2, int(3 + self._lip_sync_amp * 24))
-            gd.ellipse([cx-mw-16, my-oh-16, cx+mw+16, my+oh+16],
-                       fill=(0, 132, 255, 52))
-        gl = gl.filter(ImageFilter.GaussianBlur(radius=26))
-
-        img = Image.new("RGBA", (W, H), (4, 4, 15, 255))
-        img.alpha_composite(gl)
-        d = ImageDraw.Draw(img)
+            d.ellipse([cx-mw-16, my-oh-16, cx+mw+16, my+oh+16], fill=(0, 132, 255, 52))
 
         # Background grid
         for x in range(0, W, 40):
@@ -922,23 +1001,16 @@ class AliaGUI:
             x_sp = int(fw*math.sqrt(max(0,1-(scan_rel/fh)**2))*0.90)
             d.line([(cx-x_sp,scan_y),(cx+x_sp,scan_y)], fill=(0,60,138))
 
-        # ── 7. Tight glow — strong skull-edge glow like reference ─────────
-        gl2 = Image.new("RGBA",(W,H),(0,0,0,0))
-        g2  = ImageDraw.Draw(gl2)
-        g2.polygon(head_pts, outline=(0,180,255,218))
-        g2.ellipse([cx-fw-4,cy-fh-4,cx+fw+4,cy+fh+4],
-                   outline=(0,100,192,88), width=12)
-        for ex in (cx-36,cx+36):
-            g2.ellipse([ex-25,ey-21,ex+25,ey+21], fill=(0,145,242,95))
-        if self.state == "speaking":
-            oh = max(2,int(3+self._lip_sync_amp*24))
-            g2.ellipse([cx-mw-3,my-oh-3,cx+mw+3,my+oh+3],
-                       outline=(0,180,255,152), width=3)
-        else:
-            g2.ellipse([cx-mw-3,my-9,cx+mw+3,my+7], fill=(0,84,175,44))
-        gl2 = gl2.filter(ImageFilter.GaussianBlur(radius=9))
-        img.alpha_composite(gl2)
+        # ── 7. Tight skull-edge glow (cached — GaussianBlur radius=9 runs once) ──
+        img.alpha_composite(self._avatar_gl2_base_cache)
         d = ImageDraw.Draw(img)
+        # Mouth area overlay per-frame (no blur needed — small element)
+        if self.state == "speaking":
+            oh = max(2, int(3 + self._lip_sync_amp * 24))
+            d.ellipse([cx-mw-3,my-oh-3,cx+mw+3,my+oh+3],
+                      outline=(0,180,255,152), width=3)
+        else:
+            d.ellipse([cx-mw-3,my-9,cx+mw+3,my+7], fill=(0,84,175,44))
 
         # ── 8. Eyebrows ───────────────────────────────────────────────────
         br_y    = cy - 55
@@ -1052,6 +1124,51 @@ class AliaGUI:
                           text=txt, font=("Courier",7), fill=TEXT_DIM, anchor="e")
         self._draw_hud_corners(c, cx, cy)
 
+    def _build_gl_caches(self):
+        """Pre-render and blur both glow layers once; reused every animation frame."""
+        W, H   = 820, 400
+        cx, cy = 410, 186
+        fw, fh = 78, 118
+        ey     = cy - 34
+        mw     = 30
+        my     = cy + 62
+
+        # Wide atmospheric bloom — radius=26 blur (the most expensive operation)
+        gl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(gl)
+        for off, alp in [(96, 6), (72, 15), (46, 32), (22, 58)]:
+            gd.ellipse([cx-fw-off, cy-fh-int(off*0.7),
+                        cx+fw+off, cy+fh+int(off*0.7)],
+                       fill=(0, 138, 228, alp))
+        gd.polygon([
+            (cx-fw-136, cy-fh-24), (cx+fw+136, cy-fh-24),
+            (cx+fw+98,  H),        (cx-fw-98,  H),
+        ], fill=(0, 44, 110, 11))
+        for ex in (cx-36, cx+36):
+            gd.ellipse([ex-40, ey-30, ex+40, ey+30], fill=(0, 150, 255, 65))
+        self._avatar_gl_base_cache = gl.filter(ImageFilter.GaussianBlur(radius=26))
+
+        # Skull-edge glow — radius=9 blur (static parts only; mouth added per-frame)
+        head_pts = [
+            (cx,          cy - fh - 4),  (cx + 42,     cy - fh + 2),
+            (cx + fw - 6, cy - fh + 28), (cx + fw + 6, cy - fh + 64),
+            (cx + fw + 10, cy - 26),     (cx + fw + 4,  cy + 18),
+            (cx + fw - 14, cy + 58),     (cx + fw - 36, cy + fh - 6),
+            (cx + 22,  cy + fh + 6),     (cx,           cy + fh + 10),
+            (cx - 22,  cy + fh + 6),     (cx - fw + 36, cy + fh - 6),
+            (cx - fw + 14, cy + 58),     (cx - fw - 4,  cy + 18),
+            (cx - fw - 10, cy - 26),     (cx - fw - 6,  cy - fh + 64),
+            (cx - fw + 6,  cy - fh + 28),(cx - 42,      cy - fh + 2),
+        ]
+        gl2 = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        g2  = ImageDraw.Draw(gl2)
+        g2.polygon(head_pts, outline=(0, 180, 255, 218))
+        g2.ellipse([cx-fw-4, cy-fh-4, cx+fw+4, cy+fh+4],
+                   outline=(0, 100, 192, 88), width=12)
+        for ex in (cx-36, cx+36):
+            g2.ellipse([ex-25, ey-21, ex+25, ey+21], fill=(0, 145, 242, 95))
+        self._avatar_gl2_base_cache = gl2.filter(ImageFilter.GaussianBlur(radius=9))
+
     def _draw_avatar_canvas_fallback(self, c):
         """Canvas-only avatar used when PIL is unavailable."""
         cx, cy = 410, 188
@@ -1098,10 +1215,16 @@ class AliaGUI:
     #  Animation loop
     # ------------------------------------------------------------------ #
     def _animate(self):
-        speed = {"idle": 0.8, "listening": 2.0, "speaking": 1.5, "thinking": 2.5}
-        self.angle = (self.angle + speed.get(self.state, 1.0)) % 360
+        # Adaptive frame rate — slow down when idle so UI events (dropdowns, clicks)
+        # get CPU time; only run at full 30ms when speaking (lip sync needs it).
+        _interval_ms = {"idle": 100, "listening": 60, "speaking": 30, "thinking": 60}
+        _interval    = _interval_ms.get(self.state, 100)
+        _scale       = _interval / 30.0   # keep apparent animation speed constant
 
-        self.pulse += 0.05 * self.pulse_dir
+        _speeds = {"idle": 0.8, "listening": 2.0, "speaking": 1.5, "thinking": 2.5}
+        self.angle = (self.angle + _speeds.get(self.state, 0.8) * _scale) % 360
+
+        self.pulse += 0.05 * self.pulse_dir * _scale
         if self.pulse >= 1.0: self.pulse_dir = -1
         if self.pulse <= 0.0: self.pulse_dir =  1
 
@@ -1116,7 +1239,7 @@ class AliaGUI:
         else:
             self._lip_sync_amp = 0.0
 
-        # Blink animation (avatar mode only)
+        # Blink animation (avatar mode only) — speed-scaled to frame rate
         if self._avatar_mode:
             if self._blink_phase == "wait":
                 self._blink_wait += 1
@@ -1124,11 +1247,11 @@ class AliaGUI:
                     self._blink_phase = "closing"
                     self._blink_wait  = 0
             elif self._blink_phase == "closing":
-                self._blink_progress = min(1.0, self._blink_progress + 0.2)
+                self._blink_progress = min(1.0, self._blink_progress + 0.2 * _scale)
                 if self._blink_progress >= 1.0:
                     self._blink_phase = "opening"
             elif self._blink_phase == "opening":
-                self._blink_progress = max(0.0, self._blink_progress - 0.2)
+                self._blink_progress = max(0.0, self._blink_progress - 0.2 * _scale)
                 if self._blink_progress <= 0.0:
                     self._blink_phase    = "wait"
                     self._blink_wait_max = random.randint(110, 270)
@@ -1142,7 +1265,7 @@ class AliaGUI:
         )
 
         self._draw()
-        self.root.after(30, self._animate)   # ~33 fps
+        self.root.after(_interval, self._animate)
 
     # ------------------------------------------------------------------ #
     #  Thread-safe public API
@@ -1159,12 +1282,11 @@ class AliaGUI:
             }
             self.status_var.set(labels.get(state) or state.upper())
             if text:
-                self._last_text = text
-                self.text_var.set(text)
+                self._last_text = text   # retained internally; not shown in UI
         self.root.after(0, _update)
 
     def show_text(self, text):
-        self.root.after(0, lambda: self.text_var.set(text))
+        self._last_text = text   # retained internally; not shown in UI
 
     # ------------------------------------------------------------------ #
     #  Video / Camera

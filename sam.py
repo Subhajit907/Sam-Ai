@@ -4,6 +4,7 @@ A voice-controlled AI assistant with a Jarvis-like GUI.
 """
 
 import threading
+import time
 from modules import state
 from modules.config import is_configured
 from modules.setup_dialog import show_setup_dialog
@@ -20,6 +21,10 @@ def voice_loop():
         command = listen()
         if command:
             handle_command(command)
+        else:
+            # Brief pause before re-entering listen() so the mic can reset
+            # and the UI doesn't flash "Listening..." in a tight loop
+            time.sleep(0.4)
 
 
 if __name__ == "__main__":
