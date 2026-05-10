@@ -69,7 +69,7 @@ def ask_openai(prompt):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=history,  # type: ignore[arg-type]
             temperature=0.85,
             max_tokens=300,
