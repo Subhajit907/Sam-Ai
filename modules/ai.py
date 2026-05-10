@@ -57,11 +57,26 @@ def _get_history():
 
 
 def _get_full_history() -> list[dict]:
-    """History with document context injected right after the system prompt."""
+    """History with optional doc context and translator instruction injected after system prompt."""
     history = _get_history()
+
+    from modules.translator import is_active as _trans_active, get_from_lang, get_to_lang
+    if _trans_active():
+        system_content = (
+            history[0]["content"]
+            + f"\n\nTRANSLATOR MODE ACTIVE: The user is speaking in {get_from_lang()}. "
+            f"You MUST respond in {get_to_lang()} only. Never use any other language in your response."
+        )
+        system_msg: dict = {"role": "system", "content": system_content}
+    else:
+        system_msg = history[0]
+
     if not _doc_messages:
+        if _trans_active():
+            return [system_msg] + history[1:]
         return history
-    return [history[0]] + _doc_messages + history[1:]
+
+    return [system_msg] + _doc_messages + history[1:]
 
 
 # ── Document context ──────────────────────────────────────────────────────────

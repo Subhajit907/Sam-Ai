@@ -213,6 +213,77 @@ class AliaGUI:
         )
         self._clear_doc_btn.pack(side="left")
 
+        # Row 3 — translator
+        row3 = tk.Frame(ctrl, bg=BG)
+        row3.pack(pady=(6, 0))
+
+        _TRANS_BG  = "#0d0a1a"
+        _TRANS_BDR = "#2a1a4a"
+        _TRANS_FG  = "#bb88ff"
+        _TRANS_ACT = "#1a0d2e"
+
+        tf, self._trans_btn = _styled_btn(
+            row3, "  ⇄  TRANSLATOR  ", self._toggle_translator,
+            fg=_TRANS_FG, bg=_TRANS_BG, bdr=_TRANS_BDR,
+        )
+        tf.pack(side="left", padx=6)
+
+        # Language selector panel (shown only when translator is active)
+        # Uses ttk.Combobox instead of OptionMenu — avoids macOS native-menu
+        # freeze that occurs when the animation after() loop runs every 30 ms.
+        self._trans_panel = tk.Frame(row3, bg=BG)
+
+        from tkinter import ttk
+        from modules.translator import LANG_NAMES
+        self._from_lang_var = tk.StringVar(value="English")
+        self._to_lang_var   = tk.StringVar(value="French")
+
+        # Style comboboxes to match the dark theme
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            "Trans.TCombobox",
+            fieldbackground=_TRANS_BG,
+            background=_TRANS_BDR,
+            foreground=_TRANS_FG,
+            selectbackground=RING2,
+            selectforeground=BRIGHT,
+            bordercolor=_TRANS_BDR,
+            arrowcolor=_TRANS_FG,
+            padding=4,
+        )
+        style.map(
+            "Trans.TCombobox",
+            fieldbackground=[("readonly", _TRANS_BG)],
+            foreground=[("readonly", _TRANS_FG)],
+        )
+
+        # FROM label + combobox
+        tk.Label(self._trans_panel, text="FROM", font=("Courier", 7),
+                 fg=TEXT_DIM, bg=BG).pack(side="left", padx=(10, 3))
+        self._from_cb = ttk.Combobox(
+            self._trans_panel, textvariable=self._from_lang_var,
+            values=LANG_NAMES, state="readonly", width=11,
+            style="Trans.TCombobox", font=("Courier", 9, "bold"),
+        )
+        self._from_cb.bind("<<ComboboxSelected>>", self._on_lang_change)
+        self._from_cb.pack(side="left", padx=2)
+
+        # Arrow
+        tk.Label(self._trans_panel, text=" → ", font=("Courier", 13, "bold"),
+                 fg=_TRANS_FG, bg=BG).pack(side="left")
+
+        # TO label + combobox
+        tk.Label(self._trans_panel, text="TO", font=("Courier", 7),
+                 fg=TEXT_DIM, bg=BG).pack(side="left", padx=(0, 3))
+        self._to_cb = ttk.Combobox(
+            self._trans_panel, textvariable=self._to_lang_var,
+            values=LANG_NAMES, state="readonly", width=11,
+            style="Trans.TCombobox", font=("Courier", 9, "bold"),
+        )
+        self._to_cb.bind("<<ComboboxSelected>>", self._on_lang_change)
+        self._to_cb.pack(side="left", padx=2)
+
     # ------------------------------------------------------------------ #
     #  Document upload
     # ------------------------------------------------------------------ #
@@ -268,6 +339,37 @@ class AliaGUI:
         self._doc_name_var.set("")
         self._doc_badge.pack_forget()
         self.status_var.set("Document cleared.")
+        self.root.after(2000, lambda: self.status_var.set("STANDBY"))
+
+    # ------------------------------------------------------------------ #
+    #  Translator
+    # ------------------------------------------------------------------ #
+    def _toggle_translator(self):
+        from modules import translator as trans_mod
+        if trans_mod.is_active():
+            trans_mod.clear()
+            self._trans_btn.config(fg="#bb88ff", bg="#0d0a1a", text="  ⇄  TRANSLATOR  ")
+            self._trans_panel.pack_forget()
+            self.status_var.set("Translator off.")
+            self.root.after(2000, lambda: self.status_var.set("STANDBY"))
+        else:
+            from_lang = self._from_lang_var.get()
+            to_lang   = self._to_lang_var.get()
+            trans_mod.set_languages(from_lang, to_lang)
+            self._trans_btn.config(fg="#66d9ff", bg="#0d182a", text="  ⇄  TRANSLATING  ")
+            self._trans_panel.pack(side="left", padx=(4, 0))
+            self.status_var.set(f"Translating: {from_lang} → {to_lang}")
+            self.root.after(3000, lambda: self.status_var.set("STANDBY"))
+
+    def _on_lang_change(self, *_):
+        # Called via <<ComboboxSelected>> event (arg is an Event object — ignored)
+        from modules import translator as trans_mod
+        if not trans_mod.is_active():
+            return
+        from_lang = self._from_lang_var.get()
+        to_lang   = self._to_lang_var.get()
+        trans_mod.set_languages(from_lang, to_lang)
+        self.status_var.set(f"Translating: {from_lang} → {to_lang}")
         self.root.after(2000, lambda: self.status_var.set("STANDBY"))
 
     # ------------------------------------------------------------------ #

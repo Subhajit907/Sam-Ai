@@ -141,9 +141,12 @@ def speak(text):
         if get_mode() == "free":
             import asyncio
             import edge_tts
+            from modules.translator import is_active as _trans_active, get_to_lang, get_tts_voice
+
+            voice = get_tts_voice(get_to_lang()) if _trans_active() else "en-US-AriaNeural"
 
             async def _synthesize():
-                comm = edge_tts.Communicate(text, voice="en-US-AriaNeural", rate="+5%")
+                comm = edge_tts.Communicate(text, voice=voice, rate="+5%")
                 await comm.save(tmp_path)
 
             asyncio.run(_synthesize())
