@@ -167,6 +167,91 @@ class AliaGUI:
         )
         mode_menu.pack(side="left")
 
+        # ── Document upload bar ───────────────────────────────────────────
+        doc_frame = tk.Frame(self.root, bg=BG)
+        doc_frame.pack(pady=(0, 10))
+
+        self._upload_btn = tk.Button(
+            doc_frame, text="[ UPLOAD DOCUMENT ]",
+            font=("Courier", 9, "bold"),
+            fg=GLOW, bg=BG, activebackground=DIM,
+            activeforeground=BRIGHT, relief="flat", bd=0,
+            cursor="hand2", command=self._upload_document,
+        )
+        self._upload_btn.pack(side="left", padx=(20, 8))
+
+        self._doc_name_var = tk.StringVar(value="")
+        self._doc_label = tk.Label(
+            doc_frame, textvariable=self._doc_name_var,
+            font=("Courier", 9), fg=BRIGHT, bg=BG,
+        )
+        self._doc_label.pack(side="left")
+
+        self._clear_doc_btn = tk.Button(
+            doc_frame, text="[X]",
+            font=("Courier", 9, "bold"),
+            fg="#ff4444", bg=BG, activebackground=DIM,
+            relief="flat", bd=0, cursor="hand2",
+            command=self._clear_document,
+        )
+        # hidden until a doc is loaded
+
+    # ------------------------------------------------------------------ #
+    #  Document upload
+    # ------------------------------------------------------------------ #
+    def _upload_document(self):
+        from tkinter import filedialog
+        from modules import document as doc_mod
+        from modules.ai import (set_document_context, set_document_image_context,
+                                describe_image_free, describe_image_paid)
+        from modules.config import get_mode
+
+        path = filedialog.askopenfilename(
+            title="Upload a document",
+            filetypes=[
+                ("All supported", "*.pdf *.docx *.doc *.txt *.md *.csv *.jpg *.jpeg *.png *.webp *.bmp *.gif"),
+                ("PDF",          "*.pdf"),
+                ("Word",         "*.docx *.doc"),
+                ("Text / CSV",   "*.txt *.md *.csv"),
+                ("Images",       "*.jpg *.jpeg *.png *.webp *.bmp *.gif"),
+            ],
+        )
+        if not path:
+            return
+
+        filename = os.path.basename(path)
+        self._doc_name_var.set(f"DOC: {filename}")
+        self._clear_doc_btn.pack(side="left", padx=(6, 0))
+        self.status_var.set(f"Reading {filename}...")
+        self.root.update_idletasks()
+
+        def _process():
+            if doc_mod.is_image(path):
+                b64 = doc_mod.to_base64(path)
+                mime = doc_mod.mime_type(path)
+                self.status_var.set("Analyzing image...")
+                if get_mode() == "free":
+                    desc = describe_image_free(b64)
+                else:
+                    desc = describe_image_paid(b64, mime)
+                set_document_image_context(filename, desc)
+            else:
+                text = doc_mod.extract_text(path)
+                set_document_context(filename, text)
+
+            self.status_var.set(f"Ready — {filename} loaded. Ask me anything about it!")
+            self.root.after(3000, lambda: self.status_var.set("STANDBY"))
+
+        threading.Thread(target=_process, daemon=True).start()
+
+    def _clear_document(self):
+        from modules.ai import clear_document_context
+        clear_document_context()
+        self._doc_name_var.set("")
+        self._clear_doc_btn.pack_forget()
+        self.status_var.set("Document cleared.")
+        self.root.after(2000, lambda: self.status_var.set("STANDBY"))
+
     # ------------------------------------------------------------------ #
     #  Mode switcher
     # ------------------------------------------------------------------ #

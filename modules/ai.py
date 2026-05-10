@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_llava_pulling = False   # prevent duplicate background pulls
+_llava_pulling = False
 
 SYSTEM_PROMPT = """You are Alia, a friendly and natural AI assistant. Talk like a real person — conversational, warm, and concise.
 
@@ -33,6 +33,10 @@ MAX_HISTORY = 20
 
 _conversation_history = None
 
+# Document context — injected between system prompt and chat history in every API call
+_doc_messages: list[dict] = []
+
+
 # ── Lazy-init clients ─────────────────────────────────────────────────────────
 
 def _openai_client():
@@ -52,6 +56,86 @@ def _get_history():
     return _conversation_history
 
 
+def _get_full_history() -> list[dict]:
+    """History with document context injected right after the system prompt."""
+    history = _get_history()
+    if not _doc_messages:
+        return history
+    return [history[0]] + _doc_messages + history[1:]
+
+
+# ── Document context ──────────────────────────────────────────────────────────
+
+def set_document_context(filename: str, content: str):
+    """Inject a text document into every subsequent AI call."""
+    global _doc_messages
+    _doc_messages = [
+        {"role": "user",      "content": f"I've uploaded a document called '{filename}'. Here is its full content:\n\n{content}"},
+        {"role": "assistant", "content": f"Got it! I've read '{filename}'. Ask me anything about it."},
+    ]
+    print(f"[Doc] Context set: {filename} ({len(content)} chars)")
+
+
+def set_document_image_context(filename: str, description: str):
+    """Inject an AI-generated description of an uploaded image."""
+    global _doc_messages
+    _doc_messages = [
+        {"role": "user",      "content": f"I've uploaded an image called '{filename}'. Here is a detailed description of it:\n\n{description}"},
+        {"role": "assistant", "content": f"Got it! I can see the image '{filename}'. Ask me anything about it."},
+    ]
+    print(f"[Doc] Image context set: {filename}")
+
+
+def clear_document_context():
+    global _doc_messages
+    _doc_messages = []
+    print("[Doc] Context cleared.")
+
+
+def has_document() -> bool:
+    return bool(_doc_messages)
+
+
+# ── Image description (used for uploaded image documents) ─────────────────────
+
+def describe_image_free(b64: str) -> str:
+    try:
+        import ollama
+        response = ollama.chat(
+            model="llava",
+            messages=[{
+                "role": "user",
+                "content": "Describe everything in this image in detail — all text, objects, layout, colours, numbers. Be thorough.",
+                "images": [b64],
+            }],
+        )
+        return response.message.content or ""
+    except Exception as e:
+        err = str(e)
+        if "404" in err or "not found" in err.lower():
+            _pull_llava_background()
+            return "[Vision model not ready — pulling llava in background. Try again in a few minutes.]"
+        return f"[Image analysis error: {e}]"
+
+
+def describe_image_paid(b64: str, mime: str = "image/jpeg") -> str:
+    try:
+        response = _openai_client().chat.completions.create(
+            model="gpt-4o",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe everything in this image in detail — all text, objects, layout, colours, numbers. Be thorough."},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "high"}},
+                ],
+            }],
+            max_tokens=1000,
+        )
+        return response.choices[0].message.content or ""
+    except Exception as e:
+        return f"[Image analysis error: {e}]"
+
+
 # ── Free backend (Ollama) ─────────────────────────────────────────────────────
 
 def _ask_ollama(prompt: str) -> str:
@@ -63,7 +147,7 @@ def _ask_ollama(prompt: str) -> str:
         history[:] = [history[0]] + history[-MAX_HISTORY:]
     try:
         import ollama
-        response = ollama.chat(model="llama3.2", messages=history)
+        response = ollama.chat(model="llama3.2", messages=_get_full_history())
         reply = response.message.content or ""
         history.append({"role": "assistant", "content": reply})
         save_chat("assistant", reply)
@@ -136,7 +220,7 @@ def _ask_openai_paid(prompt: str) -> str:
     try:
         response = _openai_client().chat.completions.create(
             model="gpt-4o",
-            messages=history,  # type: ignore[arg-type]
+            messages=_get_full_history(),  # type: ignore[arg-type]
             temperature=0.85,
             max_tokens=300,
         )
@@ -184,7 +268,6 @@ def _ask_openai_vision_paid(prompt: str, b64_image: str) -> str:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def ask_openai(prompt: str) -> str:
-    """Main chat call — routes to Ollama or OpenAI based on config."""
     from modules.config import get_mode
     if get_mode() == "free":
         return _ask_ollama(prompt)
@@ -192,7 +275,6 @@ def ask_openai(prompt: str) -> str:
 
 
 def ask_openai_with_vision(prompt: str, b64_image: str) -> str:
-    """Vision call — routes to LLaVA or GPT-4o Vision based on config."""
     from modules.config import get_mode
     if get_mode() == "free":
         return _ask_ollama_vision(prompt, b64_image)
@@ -205,7 +287,6 @@ def reset_conversation():
 
 
 def generate_game_code(project_name: str, game_type: str) -> str | None:
-    """Generate pygame game code — uses Ollama or OpenAI based on config."""
     from modules.config import get_mode
     prompt = (
         f"Create a complete Python {game_type} game using pygame.\n"

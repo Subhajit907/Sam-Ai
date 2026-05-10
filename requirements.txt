@@ -1,6 +1,8 @@
 openai
 edge-tts
 ollama
+pymupdf
+python-docx
 SpeechRecognition
 pyaudio
 pyttsx3
