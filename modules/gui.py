@@ -277,12 +277,12 @@ class AliaGUI:
     def _upload_document(self):
         from tkinter import filedialog
         from modules import document as doc_mod
-        from modules.ai import (set_document_context, set_document_image_context,
-                                describe_image_free, describe_image_paid)
+        from modules.ai import (add_document_context, add_document_image_context,
+                                describe_image_free, describe_image_paid, document_count)
         from modules.config import get_mode
 
-        path = filedialog.askopenfilename(
-            title="Upload a document",
+        paths = filedialog.askopenfilenames(
+            title="Upload documents or images (select multiple)",
             filetypes=[
                 ("All supported", "*.pdf *.docx *.doc *.txt *.md *.csv *.jpg *.jpeg *.png *.webp *.bmp *.gif"),
                 ("PDF",          "*.pdf"),
@@ -291,31 +291,37 @@ class AliaGUI:
                 ("Images",       "*.jpg *.jpeg *.png *.webp *.bmp *.gif"),
             ],
         )
-        if not path:
+        if not paths:
             return
 
-        filename = os.path.basename(path)
-        short = filename if len(filename) <= 28 else filename[:25] + "..."
-        self._doc_name_var.set(f"  {short}  ")
         self._doc_badge.pack(side="left", padx=6)
-        self.status_var.set(f"Reading {filename}...")
+        self.status_var.set(f"Loading {len(paths)} file(s)...")
         self.root.update_idletasks()
 
         def _process():
-            if doc_mod.is_image(path):
-                b64 = doc_mod.to_base64(path)
-                mime = doc_mod.mime_type(path)
-                self.status_var.set("Analyzing image...")
-                if get_mode() == "free":
-                    desc = describe_image_free(b64)
-                else:
-                    desc = describe_image_paid(b64, mime)
-                set_document_image_context(filename, desc)
-            else:
-                text = doc_mod.extract_text(path)
-                set_document_context(filename, text)
+            for i, path in enumerate(paths, 1):
+                filename = os.path.basename(path)
+                self.root.after(0, lambda f=filename, idx=i: self.status_var.set(
+                    f"Reading {idx}/{len(paths)}: {f[:30]}..."
+                ))
 
-            self.status_var.set(f"Ready — {filename} loaded. Ask me anything about it!")
+                if doc_mod.is_image(path):
+                    b64  = doc_mod.to_base64(path)
+                    mime = doc_mod.mime_type(path)
+                    if get_mode() == "free":
+                        desc = describe_image_free(b64)
+                    else:
+                        desc = describe_image_paid(b64, mime)
+                    add_document_image_context(filename, desc)
+                else:
+                    text = doc_mod.extract_text(path)
+                    add_document_context(filename, text)
+
+            total = document_count()
+            self.root.after(0, lambda: self._doc_name_var.set(f"  {total} file(s) loaded  "))
+            self.root.after(0, lambda: self.status_var.set(
+                f"Ready — {total} file(s) loaded. Ask me anything about them!"
+            ))
             self.root.after(3000, lambda: self.status_var.set("STANDBY"))
 
         threading.Thread(target=_process, daemon=True).start()
@@ -325,7 +331,7 @@ class AliaGUI:
         clear_document_context()
         self._doc_name_var.set("")
         self._doc_badge.pack_forget()
-        self.status_var.set("Document cleared.")
+        self.status_var.set("All documents cleared.")
         self.root.after(2000, lambda: self.status_var.set("STANDBY"))
 
     # ------------------------------------------------------------------ #
@@ -381,7 +387,7 @@ class AliaGUI:
         self.root.update_idletasks()
         rx = self.root.winfo_rootx()
         ry = self.root.winfo_rooty()
-        win.geometry(f"220x180+{rx + 14}+{ry + 50}")
+        win.geometry(f"260x300+{rx + 14}+{ry + 50}")
 
         # Card border frame
         border = tk.Frame(win, bg="#1a3a5c", padx=1, pady=1)
@@ -442,6 +448,51 @@ class AliaGUI:
                 self._s_paid_btn.config(fg=BRIGHT, bg="#112240")
 
         _refresh()
+
+        # ── ROLE section ──────────────────────────────────────────────────
+        tk.Frame(inner, bg="#1a3a5c", height=1).pack(fill="x", pady=(6, 0))
+
+        tk.Label(inner, text="ROLE", font=("Courier", 7),
+                 fg=TEXT_DIM, bg="#04040f", pady=6).pack(anchor="w", padx=14)
+
+        role_area = tk.Frame(inner, bg="#04040f")
+        role_area.pack(fill="x", padx=12, pady=(0, 10))
+
+        from modules.role import get_role_display, ROLE_NAMES
+        from modules.ai import switch_role
+
+        _ROLE_LABELS = {
+            "General":                          "General",
+            "Helping Customer to Fix Product":  "Customer Support",
+        }
+
+        role_btns: dict = {}
+
+        def _pick_role(name: str):
+            switch_role(name)
+            _refresh_roles()
+            self.status_var.set(f"Role: {_ROLE_LABELS.get(name, name)}")
+            self.root.after(2500, lambda: self.status_var.set("STANDBY"))
+
+        def _refresh_roles():
+            current = get_role_display()
+            for rname, rbtn in role_btns.items():
+                if rname == current:
+                    rbtn.config(fg=BRIGHT, bg="#112240")
+                else:
+                    rbtn.config(fg=TEXT_DIM, bg="#0a1628")
+
+        for rname in ROLE_NAMES:
+            rb = tk.Button(
+                role_area, text=_ROLE_LABELS.get(rname, rname),
+                font=("Courier", 8, "bold"),
+                relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+                command=lambda n=rname: _pick_role(n),
+            )
+            rb.pack(fill="x", pady=(0, 4))
+            role_btns[rname] = rb
+
+        _refresh_roles()
 
         # Close when clicking outside
         def _on_focus_out(e):

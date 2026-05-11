@@ -8,28 +8,11 @@ load_dotenv()
 
 _llava_pulling = False
 
-SYSTEM_PROMPT = """You are Alia, a real-time voice AI assistant. You hear the user through their microphone and speak back to them — this is a live two-way voice conversation, exactly like talking to a person.
+from modules.role import get_system_prompt, get_vision_prompt
 
-Rules:
-- You CAN hear the user — their speech is transcribed and sent to you as text. Never say you cannot listen or hear.
-- Keep responses short and natural — 1 to 3 sentences max unless the user asks for detail
-- Talk like a real person: warm, casual, direct. No bullet points, no headers, no lists.
-- Show personality: be friendly, occasionally light-hearted, curious
-- Remember what was said earlier in the conversation
-- If you don't know something, say so naturally and move on
-- Never sound robotic, stiff, or formal
-- Don't repeat the user's words back to them — just respond naturally"""
-
-SYSTEM_PROMPT_VISION = """You are Alia, a friendly AI assistant. You have a live camera feed from the user's webcam attached to every message.
-
-Your job:
-- Look at the image and answer the user's question based on what you actually see
-- Describe objects, items, text, colours, or scenes visible in the frame — be specific
-- If the user holds something up or shows you something, describe it clearly and helpfully
-- Do NOT say you cannot see — you CAN see the camera feed
-- Do NOT identify or name any person by face — only describe objects and items
-- Keep answers short and conversational, spoken like a real person
-- Never use bullet points or headers — just talk naturally"""
+# Legacy constants kept for any external references; actual prompts come from role module
+SYSTEM_PROMPT        = get_system_prompt()
+SYSTEM_PROMPT_VISION = get_vision_prompt()
 
 MAX_HISTORY = 20
 
@@ -52,65 +35,80 @@ def _get_history():
         from modules.memory import init_db, load_recent_chat
         init_db()
         past = load_recent_chat(MAX_HISTORY)
-        _conversation_history = [{"role": "system", "content": SYSTEM_PROMPT}] + past
+        _conversation_history = [{"role": "system", "content": get_system_prompt()}] + past
         if past:
             print(f"[Memory] Restored {len(past)} messages from previous sessions.")
     return _conversation_history
 
 
 def _get_full_history() -> list[dict]:
-    """History with optional doc context and translator instruction injected after system prompt."""
+    """History with role prompt, optional doc context, and translator instruction."""
     history = _get_history()
+
+    # Always use the live role prompt so switching roles takes effect immediately
+    base_system = get_system_prompt()
 
     from modules.translator import is_active as _trans_active, get_from_lang, get_to_lang
     if _trans_active():
-        system_content = (
-            history[0]["content"]
+        base_system = (
+            base_system
             + f"\n\nTRANSLATOR MODE ACTIVE: The user is speaking in {get_from_lang()}. "
             f"You MUST respond in {get_to_lang()} only. Never use any other language in your response."
         )
-        system_msg: dict = {"role": "system", "content": system_content}
-    else:
-        system_msg = history[0]
+
+    system_msg: dict = {"role": "system", "content": base_system}
 
     if not _doc_messages:
-        if _trans_active():
-            return [system_msg] + history[1:]
-        return history
+        return [system_msg] + history[1:]
 
     return [system_msg] + _doc_messages + history[1:]
 
 
 # ── Document context ──────────────────────────────────────────────────────────
 
-def set_document_context(filename: str, content: str):
-    """Inject a text document into every subsequent AI call."""
+def add_document_context(filename: str, content: str):
+    """Append a text document to the shared context (supports multiple files)."""
     global _doc_messages
-    _doc_messages = [
+    _doc_messages += [
         {"role": "user",      "content": f"I've uploaded a document called '{filename}'. Here is its full content:\n\n{content}"},
         {"role": "assistant", "content": f"Got it! I've read '{filename}'. Ask me anything about it."},
     ]
-    print(f"[Doc] Context set: {filename} ({len(content)} chars)")
+    print(f"[Doc] Added: {filename} ({len(content)} chars) — {len(_doc_messages)//2} doc(s) total")
 
 
-def set_document_image_context(filename: str, description: str):
-    """Inject an AI-generated description of an uploaded image."""
+def add_document_image_context(filename: str, description: str):
+    """Append an image description to the shared context (supports multiple files)."""
     global _doc_messages
-    _doc_messages = [
+    _doc_messages += [
         {"role": "user",      "content": f"I've uploaded an image called '{filename}'. Here is a detailed description of it:\n\n{description}"},
         {"role": "assistant", "content": f"Got it! I can see the image '{filename}'. Ask me anything about it."},
     ]
-    print(f"[Doc] Image context set: {filename}")
+    print(f"[Doc] Added image: {filename} — {len(_doc_messages)//2} doc(s) total")
 
 
 def clear_document_context():
     global _doc_messages
     _doc_messages = []
-    print("[Doc] Context cleared.")
+    print("[Doc] All documents cleared.")
 
 
 def has_document() -> bool:
     return bool(_doc_messages)
+
+
+def document_count() -> int:
+    return len(_doc_messages) // 2
+
+
+# Legacy single-file setters — kept for backward compatibility
+def set_document_context(filename: str, content: str):
+    clear_document_context()
+    add_document_context(filename, content)
+
+
+def set_document_image_context(filename: str, description: str):
+    clear_document_context()
+    add_document_image_context(filename, description)
 
 
 # ── Image description (used for uploaded image documents) ─────────────────────
@@ -186,7 +184,7 @@ def _ask_ollama_vision(prompt: str, b64_image: str) -> str:
         response = ollama.chat(
             model="llava",
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT_VISION},
+                {"role": "system", "content": get_vision_prompt()},
                 {"role": "user", "content": prompt, "images": [b64_image]},
             ],
         )
@@ -253,7 +251,7 @@ def _ask_openai_paid(prompt: str) -> str:
 def _ask_openai_vision_paid(prompt: str, b64_image: str) -> str:
     from modules.memory import save_chat
     history = _get_history()
-    vision_history = [{"role": "system", "content": SYSTEM_PROMPT_VISION}] + history[1:]
+    vision_history = [{"role": "system", "content": get_vision_prompt()}] + history[1:]
     user_msg = {
         "role": "user",
         "content": [
@@ -300,7 +298,15 @@ def ask_openai_with_vision(prompt: str, b64_image: str) -> str:
 
 def reset_conversation():
     global _conversation_history
-    _conversation_history = [{"role": "system", "content": SYSTEM_PROMPT}]
+    _conversation_history = [{"role": "system", "content": get_system_prompt()}]
+
+
+def switch_role(role_name: str) -> None:
+    """Switch to a new role and reset conversation history to match the new persona."""
+    from modules.role import set_role
+    set_role(role_name)
+    reset_conversation()
+    print(f"[Role] Switched to: {role_name}")
 
 
 def generate_game_code(project_name: str, game_type: str) -> str | None:
