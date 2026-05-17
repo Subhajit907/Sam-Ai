@@ -41,8 +41,8 @@ def _get_history():
     return _conversation_history
 
 
-def _get_full_history() -> list[dict]:
-    """History with role prompt, optional doc context, and translator instruction."""
+def _get_full_history(query: str = "") -> list[dict]:
+    """History with role prompt, product DB context (semantic search), doc context, and translator instruction."""
     history = _get_history()
 
     # Always use the live role prompt so switching roles takes effect immediately
@@ -58,10 +58,26 @@ def _get_full_history() -> list[dict]:
 
     system_msg: dict = {"role": "system", "content": base_system}
 
-    if not _doc_messages:
+    # Inject only the most relevant product chunks (semantic search) when in customer support role
+    from modules.role import get_role
+    product_messages: list[dict] = []
+    if get_role() == "customer_support":
+        try:
+            from modules.product_db import search_product_chunks
+            ctx = search_product_chunks(query, top_k=5)
+            if ctx:
+                product_messages = [
+                    {"role": "user",      "content": f"Here is the relevant product knowledge for this customer query:\n\n{ctx}"},
+                    {"role": "assistant", "content": "Understood. I have the relevant product information ready and I'm here to help the customer."},
+                ]
+        except Exception as e:
+            print(f"[ProductDB] Warning: could not load product context: {e}")
+
+    extra = product_messages + _doc_messages
+    if not extra:
         return [system_msg] + history[1:]
 
-    return [system_msg] + _doc_messages + history[1:]
+    return [system_msg] + extra + history[1:]
 
 
 # ── Document context ──────────────────────────────────────────────────────────
@@ -77,13 +93,40 @@ def add_document_context(filename: str, content: str):
 
 
 def add_document_image_context(filename: str, description: str):
-    """Append an image description to the shared context (supports multiple files)."""
+    """Append an image description to context; in customer support mode also injects matched product knowledge."""
     global _doc_messages
+
+    from modules.role import get_role
+    product_context = ""
+    if get_role() == "customer_support":
+        try:
+            from modules.product_db import search_product_chunks
+            product_context = search_product_chunks(description, top_k=5)
+        except Exception as e:
+            print(f"[Doc] Product match warning: {e}")
+
+    if product_context:
+        user_content = (
+            f"I've uploaded an image called '{filename}'. Here is a detailed description of what I can see:\n\n"
+            f"{description}\n\n"
+            f"Based on this image, here is the relevant product knowledge from our support database:\n\n"
+            f"{product_context}"
+        )
+        assistant_content = (
+            f"I can see the image '{filename}'. I've identified the product and matched it to our support database — "
+            f"I have full knowledge of its features, known issues, and troubleshooting steps. "
+            f"Please tell me what problem you're experiencing and I'll guide you through fixing it."
+        )
+        print(f"[Doc] Added image + product context: {filename} — {len(_doc_messages)//2 + 1} doc(s) total")
+    else:
+        user_content = f"I've uploaded an image called '{filename}'. Here is a detailed description of it:\n\n{description}"
+        assistant_content = f"Got it! I can see the image '{filename}'. Ask me anything about it."
+        print(f"[Doc] Added image: {filename} — {len(_doc_messages)//2 + 1} doc(s) total")
+
     _doc_messages += [
-        {"role": "user",      "content": f"I've uploaded an image called '{filename}'. Here is a detailed description of it:\n\n{description}"},
-        {"role": "assistant", "content": f"Got it! I can see the image '{filename}'. Ask me anything about it."},
+        {"role": "user",      "content": user_content},
+        {"role": "assistant", "content": assistant_content},
     ]
-    print(f"[Doc] Added image: {filename} — {len(_doc_messages)//2} doc(s) total")
 
 
 def clear_document_context():
@@ -113,6 +156,22 @@ def set_document_image_context(filename: str, description: str):
 
 # ── Image description (used for uploaded image documents) ─────────────────────
 
+def _image_describe_prompt() -> str:
+    from modules.role import get_role
+    if get_role() == "customer_support":
+        return (
+            "Describe this image in detail, focusing on the following:\n"
+            "1. The product shown — identify the brand name, product type (e.g. vacuum cleaner, air fryer, blender), "
+            "and any visible model name or model number on the label or body.\n"
+            "2. The overall condition — does it look new, used, or damaged?\n"
+            "3. Any visible damage, defects, or faults — cracks, burns, broken parts, loose components, error lights on the display.\n"
+            "4. The state of key components — e.g. glass bowl, brush roll, cord, buttons, filter, crisper plate, attachments.\n"
+            "5. Any text, warning labels, error codes, or numbers visible on the product.\n"
+            "Be specific and thorough — this description will be used to diagnose and fix a customer's product issue."
+        )
+    return "Describe everything in this image in detail — all text, objects, layout, colours, numbers. Be thorough."
+
+
 def describe_image_free(b64: str) -> str:
     try:
         import ollama
@@ -120,7 +179,7 @@ def describe_image_free(b64: str) -> str:
             model="llava",
             messages=[{
                 "role": "user",
-                "content": "Describe everything in this image in detail — all text, objects, layout, colours, numbers. Be thorough.",
+                "content": _image_describe_prompt(),
                 "images": [b64],
             }],
         )
@@ -140,7 +199,7 @@ def describe_image_paid(b64: str, mime: str = "image/jpeg") -> str:
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Describe everything in this image in detail — all text, objects, layout, colours, numbers. Be thorough."},
+                    {"type": "text", "text": _image_describe_prompt()},
                     {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "high"}},
                 ],
             }],
@@ -162,7 +221,7 @@ def _ask_ollama(prompt: str) -> str:
         history[:] = [history[0]] + history[-MAX_HISTORY:]
     try:
         import ollama
-        response = ollama.chat(model="llama3.2", messages=_get_full_history())
+        response = ollama.chat(model="llama3.2", messages=_get_full_history(prompt))
         reply = response.message.content or ""
         history.append({"role": "assistant", "content": reply})
         save_chat("assistant", reply)
@@ -235,7 +294,7 @@ def _ask_openai_paid(prompt: str) -> str:
     try:
         response = _openai_client().chat.completions.create(
             model="gpt-4o",
-            messages=_get_full_history(),  # type: ignore[arg-type]
+            messages=_get_full_history(prompt),  # type: ignore[arg-type]
             temperature=0.85,
             max_tokens=300,
         )
@@ -251,7 +310,21 @@ def _ask_openai_paid(prompt: str) -> str:
 def _ask_openai_vision_paid(prompt: str, b64_image: str) -> str:
     from modules.memory import save_chat
     history = _get_history()
-    vision_history = [{"role": "system", "content": get_vision_prompt()}] + history[1:]
+    # Build vision history with semantic product context injected (same as text calls)
+    from modules.role import get_role
+    product_inject: list[dict] = []
+    if get_role() == "customer_support":
+        try:
+            from modules.product_db import search_product_chunks
+            ctx = search_product_chunks(prompt, top_k=5)
+            if ctx:
+                product_inject = [
+                    {"role": "user",      "content": f"Here is the relevant product knowledge for this customer query:\n\n{ctx}"},
+                    {"role": "assistant", "content": "Understood. I have the relevant product information ready and I'm here to help the customer."},
+                ]
+        except Exception as e:
+            print(f"[ProductDB] Warning: could not load product context: {e}")
+    vision_history = [{"role": "system", "content": get_vision_prompt()}] + product_inject + _doc_messages + history[1:]
     user_msg = {
         "role": "user",
         "content": [

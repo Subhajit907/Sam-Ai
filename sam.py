@@ -11,6 +11,7 @@ from modules.setup_dialog import show_setup_dialog
 from modules.gui import AliaGUI
 from modules.voice import speak, listen, _calibrate
 from modules.commands import handle_command
+from modules.product_db import init_db as init_product_db
 
 
 def voice_loop():
@@ -28,6 +29,8 @@ def voice_loop():
 
 
 if __name__ == "__main__":
+    init_product_db()   # ensure product database exists and is seeded
+
     # Show first-run setup if mode hasn't been chosen yet
     if not is_configured():
         show_setup_dialog()
