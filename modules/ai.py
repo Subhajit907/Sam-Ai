@@ -29,6 +29,14 @@ def _openai_client():
     return OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
 
 
+def _groq_client():
+    from openai import OpenAI
+    return OpenAI(
+        api_key=os.getenv("GROQ_API_KEY", ""),
+        base_url="https://api.groq.com/openai/v1",
+    )
+
+
 def _get_history():
     global _conversation_history
     if _conversation_history is None:
@@ -58,26 +66,10 @@ def _get_full_history(query: str = "") -> list[dict]:
 
     system_msg: dict = {"role": "system", "content": base_system}
 
-    # Inject only the most relevant product chunks (semantic search) when in customer support role
-    from modules.role import get_role
-    product_messages: list[dict] = []
-    if get_role() == "customer_support":
-        try:
-            from modules.product_db import search_product_chunks
-            ctx = search_product_chunks(query, top_k=5)
-            if ctx:
-                product_messages = [
-                    {"role": "user",      "content": f"Here is the relevant product knowledge for this customer query:\n\n{ctx}"},
-                    {"role": "assistant", "content": "Understood. I have the relevant product information ready and I'm here to help the customer."},
-                ]
-        except Exception as e:
-            print(f"[ProductDB] Warning: could not load product context: {e}")
-
-    extra = product_messages + _doc_messages
-    if not extra:
+    if not _doc_messages:
         return [system_msg] + history[1:]
 
-    return [system_msg] + extra + history[1:]
+    return [system_msg] + _doc_messages + history[1:]
 
 
 # ── Document context ──────────────────────────────────────────────────────────
@@ -93,40 +85,13 @@ def add_document_context(filename: str, content: str):
 
 
 def add_document_image_context(filename: str, description: str):
-    """Append an image description to context; in customer support mode also injects matched product knowledge."""
+    """Append an image description to the shared context."""
     global _doc_messages
-
-    from modules.role import get_role
-    product_context = ""
-    if get_role() == "customer_support":
-        try:
-            from modules.product_db import search_product_chunks
-            product_context = search_product_chunks(description, top_k=5)
-        except Exception as e:
-            print(f"[Doc] Product match warning: {e}")
-
-    if product_context:
-        user_content = (
-            f"I've uploaded an image called '{filename}'. Here is a detailed description of what I can see:\n\n"
-            f"{description}\n\n"
-            f"Based on this image, here is the relevant product knowledge from our support database:\n\n"
-            f"{product_context}"
-        )
-        assistant_content = (
-            f"I can see the image '{filename}'. I've identified the product and matched it to our support database — "
-            f"I have full knowledge of its features, known issues, and troubleshooting steps. "
-            f"Please tell me what problem you're experiencing and I'll guide you through fixing it."
-        )
-        print(f"[Doc] Added image + product context: {filename} — {len(_doc_messages)//2 + 1} doc(s) total")
-    else:
-        user_content = f"I've uploaded an image called '{filename}'. Here is a detailed description of it:\n\n{description}"
-        assistant_content = f"Got it! I can see the image '{filename}'. Ask me anything about it."
-        print(f"[Doc] Added image: {filename} — {len(_doc_messages)//2 + 1} doc(s) total")
-
     _doc_messages += [
-        {"role": "user",      "content": user_content},
-        {"role": "assistant", "content": assistant_content},
+        {"role": "user",      "content": f"I've uploaded an image called '{filename}'. Here is a detailed description of it:\n\n{description}"},
+        {"role": "assistant", "content": f"Got it! I can clearly see '{filename}'. Please tell me what you need help with and I'll guide you through it."},
     ]
+    print(f"[Doc] Added image: {filename} — {len(_doc_messages)//2} doc(s) total")
 
 
 def clear_document_context():
@@ -282,6 +247,66 @@ def _pull_llava_background():
     threading.Thread(target=_pull, daemon=True).start()
 
 
+# ── Groq backend (LLaMA 3 — free, ultra-fast) ────────────────────────────────
+
+def _ask_groq(prompt: str) -> str:
+    from modules.memory import save_chat
+    history = _get_history()
+    history.append({"role": "user", "content": prompt})
+    save_chat("user", prompt)
+    if len(history) > MAX_HISTORY + 1:
+        history[:] = [history[0]] + history[-MAX_HISTORY:]
+    try:
+        response = _groq_client().chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=_get_full_history(prompt),  # type: ignore[arg-type]
+            temperature=0.85,
+            max_tokens=120,
+        )
+        reply = response.choices[0].message.content or ""
+        history.append({"role": "assistant", "content": reply})
+        save_chat("assistant", reply)
+        return reply
+    except Exception as e:
+        print(f"[Groq] Error: {e}")
+        return "Sorry, Groq isn't responding. Check your API key or internet connection."
+
+
+def _ask_groq_stream(prompt: str):
+    from modules.memory import save_chat
+    history = _get_history()
+    history.append({"role": "user", "content": prompt})
+    save_chat("user", prompt)
+    if len(history) > MAX_HISTORY + 1:
+        history[:] = [history[0]] + history[-MAX_HISTORY:]
+    try:
+        stream = _groq_client().chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=_get_full_history(prompt),  # type: ignore[arg-type]
+            temperature=0.85,
+            max_tokens=120,
+            stream=True,
+        )
+        buffer = ""
+        full_reply = ""
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            buffer += delta
+            full_reply += delta
+            sentences, buffer = _split_sentences(buffer)
+            for sentence in sentences:
+                if sentence:
+                    yield sentence
+        leftover = buffer.strip()
+        if leftover:
+            yield leftover
+        history.append({"role": "assistant", "content": full_reply.strip()})
+        save_chat("assistant", full_reply.strip())
+    except Exception as e:
+        print(f"[Groq stream] Error: {e}")
+        yield "Sorry, something went wrong with Groq."
+
+
 # ── Paid backend (OpenAI) ─────────────────────────────────────────────────────
 
 def _ask_openai_paid(prompt: str) -> str:
@@ -293,10 +318,10 @@ def _ask_openai_paid(prompt: str) -> str:
         history[:] = [history[0]] + history[-MAX_HISTORY:]
     try:
         response = _openai_client().chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=_get_full_history(prompt),  # type: ignore[arg-type]
             temperature=0.85,
-            max_tokens=300,
+            max_tokens=120,
         )
         reply = response.choices[0].message.content or ""
         history.append({"role": "assistant", "content": reply})
@@ -310,26 +335,12 @@ def _ask_openai_paid(prompt: str) -> str:
 def _ask_openai_vision_paid(prompt: str, b64_image: str) -> str:
     from modules.memory import save_chat
     history = _get_history()
-    # Build vision history with semantic product context injected (same as text calls)
-    from modules.role import get_role
-    product_inject: list[dict] = []
-    if get_role() == "customer_support":
-        try:
-            from modules.product_db import search_product_chunks
-            ctx = search_product_chunks(prompt, top_k=5)
-            if ctx:
-                product_inject = [
-                    {"role": "user",      "content": f"Here is the relevant product knowledge for this customer query:\n\n{ctx}"},
-                    {"role": "assistant", "content": "Understood. I have the relevant product information ready and I'm here to help the customer."},
-                ]
-        except Exception as e:
-            print(f"[ProductDB] Warning: could not load product context: {e}")
-    vision_history = [{"role": "system", "content": get_vision_prompt()}] + product_inject + _doc_messages + history[1:]
+    vision_history = [{"role": "system", "content": get_vision_prompt()}] + _doc_messages + history[1:]
     user_msg = {
         "role": "user",
         "content": [
             {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}", "detail": "low"}},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}", "detail": "auto"}},
         ],
     }
     vision_history.append(user_msg)
@@ -339,10 +350,10 @@ def _ask_openai_vision_paid(prompt: str, b64_image: str) -> str:
         history[:] = [history[0]] + history[-MAX_HISTORY:]
     try:
         response = _openai_client().chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=vision_history,  # type: ignore[arg-type]
             temperature=0.85,
-            max_tokens=300,
+            max_tokens=250,
         )
         reply = response.choices[0].message.content or ""
         history.append({"role": "assistant", "content": reply})
@@ -353,19 +364,109 @@ def _ask_openai_vision_paid(prompt: str, b64_image: str) -> str:
         return _ask_openai_paid(prompt)
 
 
+# ── Sentence splitter (for streaming TTS) ─────────────────────────────────────
+
+def _split_sentences(buffer: str) -> tuple[list[str], str]:
+    """
+    Extract all complete sentences from buffer.
+    Returns (list of complete sentences, leftover incomplete text).
+    Splits on . ? ! followed by a space — safe enough for voice output.
+    """
+    import re
+    sentences: list[str] = []
+    # Match sentence-ending punctuation followed by whitespace
+    pattern = re.compile(r'([^.!?]*[.!?]+)\s+')
+    pos = 0
+    for m in pattern.finditer(buffer):
+        sentence = buffer[pos:m.end()].strip()
+        if sentence:
+            sentences.append(sentence)
+        pos = m.end()
+    return sentences, buffer[pos:]
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def ask_openai(prompt: str) -> str:
     from modules.config import get_mode
-    if get_mode() == "free":
+    mode = get_mode()
+    if mode == "free":
         return _ask_ollama(prompt)
+    if mode == "groq":
+        return _ask_groq(prompt)
     return _ask_openai_paid(prompt)
+
+
+def ask_openai_stream(prompt: str):
+    """
+    Stream the AI response and yield complete sentences as they arrive.
+    Alia starts speaking the first sentence immediately — no waiting for the full reply.
+    """
+    from modules.config import get_mode
+    mode = get_mode()
+
+    if mode == "free":
+        full = _ask_ollama(prompt)
+        sentences, leftover = _split_sentences(full + " ")
+        for s in sentences:
+            yield s
+        if leftover.strip():
+            yield leftover.strip()
+        return
+
+    if mode == "groq":
+        yield from _ask_groq_stream(prompt)
+        return
+
+    # OpenAI streaming
+    from modules.memory import save_chat
+    history = _get_history()
+    history.append({"role": "user", "content": prompt})
+    save_chat("user", prompt)
+    if len(history) > MAX_HISTORY + 1:
+        history[:] = [history[0]] + history[-MAX_HISTORY:]
+
+    try:
+        stream = _openai_client().chat.completions.create(
+            model="gpt-4o-mini",
+            messages=_get_full_history(prompt),  # type: ignore[arg-type]
+            temperature=0.85,
+            max_tokens=120,
+            stream=True,
+        )
+
+        buffer = ""
+        full_reply = ""
+
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            buffer += delta
+            full_reply += delta
+
+            sentences, buffer = _split_sentences(buffer)
+            for sentence in sentences:
+                if sentence:
+                    yield sentence
+
+        leftover = buffer.strip()
+        if leftover:
+            yield leftover
+            full_reply = full_reply.strip()
+
+        history.append({"role": "assistant", "content": full_reply})
+        save_chat("assistant", full_reply)
+
+    except Exception as e:
+        print(f"[OpenAI stream] Error: {e}")
+        yield "Sorry, something went wrong on my end."
 
 
 def ask_openai_with_vision(prompt: str, b64_image: str) -> str:
     from modules.config import get_mode
-    if get_mode() == "free":
+    mode = get_mode()
+    if mode == "free":
         return _ask_ollama_vision(prompt, b64_image)
+    # Groq doesn't support vision — fall through to OpenAI
     return _ask_openai_vision_paid(prompt, b64_image)
 
 

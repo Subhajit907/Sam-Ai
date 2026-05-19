@@ -9,7 +9,7 @@ import time
 import sys
 
 from modules.voice import speak
-from modules.ai import ask_openai, ask_openai_with_vision, reset_conversation
+from modules.ai import ask_openai, ask_openai_stream, ask_openai_with_vision, reset_conversation
 from modules.projects import (
     create_python_project,
     create_game_project,
@@ -377,7 +377,19 @@ def handle_command(command):
         from modules import state, vision
         if state.gui:
             state.gui.root.after(0, state.gui._start_video)
-            speak("Camera is on. Show me something and ask!")
+            from modules.role import get_role
+            if get_role() == "customer_support":
+                speak("Camera is on. Show me the product and I'll take a look.")
+                def _auto_describe():
+                    desc = vision.describe_for_support()
+                    if desc:
+                        speak(f"I can see — {desc} What seems to be the issue with it?")
+                    else:
+                        speak("I'm ready — show me the product clearly and ask away!")
+                import threading
+                threading.Thread(target=_auto_describe, daemon=True).start()
+            else:
+                speak("Camera is on. Show me something and ask!")
         else:
             speak("No GUI available to start the camera.")
 
@@ -620,14 +632,23 @@ def handle_command(command):
             import cv2, base64
             frame = vision.get_frame()
             if frame is not None:
-                ret, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                ret, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 if ret:
                     b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
                     if state.gui:
                         state.gui.set_state("thinking")
                     reply = ask_openai_with_vision(command, b64)
-                    speak(reply)
+                    # Split reply into sentences so Alia starts speaking immediately
+                    from modules.ai import _split_sentences
+                    sentences, leftover = _split_sentences(reply + " ")
+                    for s in sentences:
+                        speak(s)
+                    if leftover.strip():
+                        speak(leftover.strip())
                     return
             # Camera on but no frame yet — fall through to text
-        reply = ask_openai(command)
-        speak(reply)
+        # Streaming: speak each sentence as it arrives instead of waiting for full reply
+        if state.gui:
+            state.gui.set_state("thinking")
+        for sentence in ask_openai_stream(command):
+            speak(sentence)

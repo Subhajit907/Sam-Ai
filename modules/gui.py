@@ -172,7 +172,8 @@ class AliaGUI:
 
         # Mode var kept for _on_mode_change; actual switcher lives in Settings panel
         from modules.config import get_mode
-        _initial = "Free (Ollama)" if get_mode() == "free" else "Paid (OpenAI)"
+        _m = get_mode()
+        _initial = "Ollama (Local)" if _m == "free" else ("Groq (LLaMA 3)" if _m == "groq" else "OpenAI (GPT-4o mini)")
         self._mode_var = tk.StringVar(value=_initial)
 
         # Upload document button — same row
@@ -387,7 +388,7 @@ class AliaGUI:
         self.root.update_idletasks()
         rx = self.root.winfo_rootx()
         ry = self.root.winfo_rooty()
-        win.geometry(f"260x300+{rx + 14}+{ry + 50}")
+        win.geometry(f"260x360+{rx + 14}+{ry + 50}")
 
         # Card border frame
         border = tk.Frame(win, bg="#1a3a5c", padx=1, pady=1)
@@ -416,36 +417,50 @@ class AliaGUI:
 
         from modules.config import get_mode
 
-        def _pick_free():
-            self._on_mode_change("Free (Ollama)")
-            _refresh()
-
-        def _pick_paid():
+        def _pick_openai():
             self._on_mode_change("Paid (OpenAI)")
             _refresh()
 
-        self._s_free_btn = tk.Button(
-            btn_area, text="Free  (Ollama)", font=("Courier", 8, "bold"),
-            relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-            command=_pick_free,
-        )
-        self._s_free_btn.pack(fill="x", pady=(0, 4))
+        def _pick_groq():
+            self._on_mode_change("Groq (LLaMA 3)")
+            _refresh()
 
-        self._s_paid_btn = tk.Button(
-            btn_area, text="Paid  (OpenAI)", font=("Courier", 8, "bold"),
+        def _pick_ollama():
+            self._on_mode_change("Free (Ollama)")
+            _refresh()
+
+        self._s_openai_btn = tk.Button(
+            btn_area, text="OpenAI  (GPT-4o mini)", font=("Courier", 8, "bold"),
             relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-            command=_pick_paid,
+            command=_pick_openai,
         )
-        self._s_paid_btn.pack(fill="x")
+        self._s_openai_btn.pack(fill="x", pady=(0, 4))
+
+        self._s_groq_btn = tk.Button(
+            btn_area, text="Groq  (LLaMA 3 · Free)", font=("Courier", 8, "bold"),
+            relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            command=_pick_groq,
+        )
+        self._s_groq_btn.pack(fill="x", pady=(0, 4))
+
+        self._s_ollama_btn = tk.Button(
+            btn_area, text="Ollama  (Local · Free)", font=("Courier", 8, "bold"),
+            relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            command=_pick_ollama,
+        )
+        self._s_ollama_btn.pack(fill="x")
 
         def _refresh():
             mode = get_mode()
-            if mode == "free":
-                self._s_free_btn.config(fg=BRIGHT, bg="#112240")
-                self._s_paid_btn.config(fg=TEXT_DIM, bg="#0a1628")
+            self._s_openai_btn.config(fg=TEXT_DIM, bg="#0a1628")
+            self._s_groq_btn.config(fg=TEXT_DIM, bg="#0a1628")
+            self._s_ollama_btn.config(fg=TEXT_DIM, bg="#0a1628")
+            if mode == "groq":
+                self._s_groq_btn.config(fg=BRIGHT, bg="#112240")
+            elif mode == "free":
+                self._s_ollama_btn.config(fg=BRIGHT, bg="#112240")
             else:
-                self._s_free_btn.config(fg=TEXT_DIM, bg="#0a1628")
-                self._s_paid_btn.config(fg=BRIGHT, bg="#112240")
+                self._s_openai_btn.config(fg=BRIGHT, bg="#112240")
 
         _refresh()
 
@@ -511,8 +526,14 @@ class AliaGUI:
     #  Mode switcher
     # ------------------------------------------------------------------ #
     def _on_mode_change(self, selection: str):
-        from modules.config import get_mode, get_openai_key, save_config
-        new_mode = "free" if "Ollama" in selection else "openai"
+        from modules.config import get_openai_key, get_groq_key, save_config
+
+        if "Ollama" in selection:
+            new_mode = "free"
+        elif "Groq" in selection:
+            new_mode = "groq"
+        else:
+            new_mode = "openai"
 
         if new_mode == "openai" and not get_openai_key():
             key = simpledialog.askstring(
@@ -521,19 +542,25 @@ class AliaGUI:
                 parent=self.root, show="*",
             )
             if not key or not key.strip():
-                # Revert dropdown — user cancelled
-                self._mode_var.set("Free (Ollama)")
                 return
-            save_config("openai", key.strip())
+            save_config("openai", openai_key=key.strip())
+
+        elif new_mode == "groq" and not get_groq_key():
+            key = simpledialog.askstring(
+                "Groq API Key",
+                "Enter your Groq API key (free at console.groq.com):",
+                parent=self.root, show="*",
+            )
+            if not key or not key.strip():
+                return
+            save_config("groq", groq_key=key.strip())
+
         else:
             save_config(new_mode)
 
-        # Keep mode_var in sync (used elsewhere in the codebase)
-        self._mode_var.set("Free (Ollama)" if new_mode == "free" else "Paid (OpenAI)")
-
-        # Confirm switch in the status label
-        label = "Free Mode (Ollama)" if new_mode == "free" else "Paid Mode (OpenAI)"
-        self.status_var.set(f"Switched to {label}")
+        labels = {"free": "Ollama (Local)", "groq": "Groq (LLaMA 3)", "openai": "OpenAI (GPT-4o mini)"}
+        self._mode_var.set(labels.get(new_mode, new_mode))
+        self.status_var.set(f"Switched to {labels.get(new_mode, new_mode)}")
         self.root.after(2500, lambda: self.status_var.set("STANDBY"))
 
     # ------------------------------------------------------------------ #
@@ -1359,6 +1386,26 @@ class AliaGUI:
         self._video_active = True
         self._video_btn.config(fg=BRIGHT, bg="#112240", text="  VIDEO ON  ")
         self.set_state("idle", "Camera is on — show me something and ask!")
+
+        # In Customer Support mode, auto-describe the product as soon as a frame is ready
+        from modules.role import get_role
+        if get_role() == "customer_support":
+            def _proactive():
+                from modules import vision as _vis
+                from modules.voice import speak as _speak
+                from modules.ai import ask_openai_with_vision, _split_sentences
+                _speak("Camera is on. Show me the product and I'll take a look.")
+                desc = _vis.describe_for_support()
+                if desc:
+                    reply = f"I can see — {desc} What seems to be the issue with it?"
+                else:
+                    reply = "I'm ready — hold the product up clearly and tell me what's wrong!"
+                sentences, leftover = _split_sentences(reply + " ")
+                for s in sentences:
+                    _speak(s)
+                if leftover.strip():
+                    _speak(leftover.strip())
+            threading.Thread(target=_proactive, daemon=True).start()
 
         self._video_win = tk.Toplevel(self.root)
         self._video_win.title("Alia — Camera")

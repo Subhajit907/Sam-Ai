@@ -1,4 +1,4 @@
-"""Config module — manages ALIA_MODE and API key in .env"""
+"""Config module — manages ALIA_MODE and API keys in .env"""
 
 import os
 from pathlib import Path
@@ -12,7 +12,7 @@ def _reload():
 
 
 def get_mode() -> str:
-    """Returns 'free', 'openai', or '' if not configured."""
+    """Returns 'free', 'openai', 'groq', or '' if not configured."""
     _reload()
     return os.getenv("ALIA_MODE", "").lower()
 
@@ -22,8 +22,13 @@ def get_openai_key() -> str:
     return os.getenv("OPENAI_API_KEY", "")
 
 
-def save_config(mode: str, openai_key: str = ""):
-    """Write ALIA_MODE (and optionally OPENAI_API_KEY) to .env."""
+def get_groq_key() -> str:
+    _reload()
+    return os.getenv("GROQ_API_KEY", "")
+
+
+def save_config(mode: str, openai_key: str = "", groq_key: str = ""):
+    """Write ALIA_MODE and API keys to .env."""
     lines = []
     if _ENV_PATH.exists():
         lines = _ENV_PATH.read_text().splitlines(keepends=True)
@@ -39,6 +44,8 @@ def save_config(mode: str, openai_key: str = ""):
     lines = _set("ALIA_MODE", mode, lines)
     if openai_key:
         lines = _set("OPENAI_API_KEY", openai_key, lines)
+    if groq_key:
+        lines = _set("GROQ_API_KEY", groq_key, lines)
 
     _ENV_PATH.write_text("".join(lines))
     _reload()
@@ -50,4 +57,6 @@ def is_configured() -> bool:
         return True
     if mode == "openai":
         return bool(get_openai_key())
+    if mode == "groq":
+        return bool(get_groq_key())
     return False

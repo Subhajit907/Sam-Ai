@@ -56,6 +56,42 @@ def get_frame():
         return _latest_frame.copy() if _latest_frame is not None else None
 
 
+def describe_for_support() -> str:
+    """
+    Called automatically when camera turns on in Customer Support mode.
+    Returns a short description of the product visible in the frame so Alia
+    can greet the customer with context about what she can see.
+    """
+    import time
+    # Give the camera 1.5 s to buffer its first usable frame
+    deadline = time.time() + 3.0
+    frame = None
+    while time.time() < deadline:
+        frame = get_frame()
+        if frame is not None:
+            break
+        time.sleep(0.2)
+
+    if frame is None:
+        return ""
+
+    ret, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ret:
+        return ""
+
+    b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
+
+    from modules.ai import ask_openai_with_vision
+    prompt = (
+        "A customer just pointed their camera at a product for support. "
+        "In one short sentence, tell me: what product or item do you see? "
+        "Include the brand name and product type if visible. "
+        "If you can't identify the product clearly, say so briefly. "
+        "Do NOT identify any person. Focus only on the object."
+    )
+    return ask_openai_with_vision(prompt, b64)
+
+
 def identify_object(question="What object am I holding or showing? Describe it briefly and clearly."):
     """Capture the current camera frame and ask GPT-4o to identify the object."""
     frame = get_frame()

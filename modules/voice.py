@@ -118,13 +118,21 @@ def _calibrate():
     if src is None:
         return
     try:
-        recognizer.adjust_for_ambient_noise(_mic_source, duration=1.0)
+        with _mic_lock:
+            recognizer.adjust_for_ambient_noise(_mic_source, duration=1.0)
         _calibrated = True
     except Exception:
         pass
 
 # Audio captured when user interrupts Alia mid-speech
 _interrupted_audio = None
+
+# Mutex: only one thread may call listen()/_calibrate() on _mic_source at a time.
+# Two concurrent reads on the same PyAudio stream → SIGTRAP/SIGSEGV in PortAudio.
+_mic_lock = threading.Lock()
+
+# Signals the mic-watcher to exit at its next 0.4 s timeout boundary.
+_watcher_stop = threading.Event()
 
 
 def speak(text):
@@ -178,8 +186,12 @@ def speak(text):
         if state.gui:
             state.gui.start_lip_sync(time.time())
 
-        # Watch mic in parallel — if user speaks, kill playback
+        # Watch mic in parallel — if user speaks, kill playback.
+        # _watcher_stop is set when audio ends; watcher checks it at each 0.4 s
+        # timeout so it exits promptly. This guarantees only one watcher accesses
+        # _mic_source at a time, preventing the PortAudio concurrent-listen crash.
         captured: list = [None]
+        _watcher_stop.clear()
 
         def watch_for_interruption():
             if _mic_source is None:
@@ -189,10 +201,10 @@ def speak(text):
             watcher.dynamic_energy_threshold = False
             watcher.pause_threshold = 2.0
             try:
-                while process.poll() is None:   # while audio still playing
+                while process.poll() is None and not _watcher_stop.is_set():
                     try:
-                        audio = watcher.listen(_mic_source, timeout=0.4, phrase_time_limit=30)
-                        # User spoke — cut Alia off and keep recording until silence
+                        with _mic_lock:
+                            audio = watcher.listen(_mic_source, timeout=0.4, phrase_time_limit=30)
                         process.kill()
                         captured[0] = audio
                         break
@@ -204,7 +216,8 @@ def speak(text):
         watcher_thread = threading.Thread(target=watch_for_interruption, daemon=True)
         watcher_thread.start()
         process.wait()
-        watcher_thread.join(timeout=1.0)
+        _watcher_stop.set()          # signal watcher to exit at next 0.4 s check
+        watcher_thread.join(timeout=1.5)   # 0.4 s listen timeout + margin = safe
 
         try:
             os.unlink(tmp_path)
@@ -236,7 +249,8 @@ def _listen_continuation():
     cont_recognizer.pause_threshold = 2.0
     cont_recognizer.non_speaking_duration = 0.8
     try:
-        audio = cont_recognizer.listen(_mic_source, timeout=1.5, phrase_time_limit=30)
+        with _mic_lock:
+            audio = cont_recognizer.listen(_mic_source, timeout=1.5, phrase_time_limit=30)
         return cont_recognizer.recognize_google(audio)  # type: ignore[attr-defined]
     except (sr.WaitTimeoutError, sr.UnknownValueError, Exception):
         return ""
@@ -281,8 +295,8 @@ def listen():
     try:
         print("Listening...")
         try:
-            # timeout=8: wait up to 8s for speech to start
-            audio = recognizer.listen(_mic_source, timeout=8, phrase_time_limit=25)
+            with _mic_lock:
+                audio = recognizer.listen(_mic_source, timeout=8, phrase_time_limit=25)
         except sr.WaitTimeoutError:
             if state.gui:
                 state.gui.set_state("idle")
