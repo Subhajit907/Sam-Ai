@@ -1,10 +1,10 @@
 """Config module — manages ALIA_MODE and API keys in .env"""
 
 import os
-from pathlib import Path
 from dotenv import load_dotenv
+from modules.paths import env_path
 
-_ENV_PATH = Path(__file__).parent.parent / ".env"
+_ENV_PATH = env_path()
 
 
 def _reload():

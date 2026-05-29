@@ -4,9 +4,10 @@ import sqlite3
 import os
 import base64
 from datetime import datetime
+from modules.paths import memory_dir
 
-_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "memory", "alia_memory.db")
-_IMG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "memory", "images")
+_DB_PATH = str(memory_dir() / "alia_memory.db")
+_IMG_DIR = str(memory_dir() / "images")
 
 
 def _connect():
