@@ -2,11 +2,14 @@
 Centralised path resolution.
 
 When running from source: paths are relative to the project root.
-When running inside a PyInstaller .app bundle: the bundle directory is
-read-only, so writable files (config, memory DB) go to
-~/Library/Application Support/Alia AI/ instead.
+When running inside a PyInstaller bundle: the bundle directory is
+read-only, so writable files (config, memory DB) go to a platform-appropriate
+writable directory instead.
+  macOS  → ~/Library/Application Support/Alia AI/
+  Windows → %APPDATA%/Alia AI/
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,8 +17,13 @@ from pathlib import Path
 def _app_support_dir() -> Path:
     """Return a writable data directory, creating it if needed."""
     if getattr(sys, "frozen", False):
-        # PyInstaller .app bundle — use macOS Application Support
-        d = Path.home() / "Library" / "Application Support" / "Alia AI"
+        if sys.platform == "win32":
+            # Windows — use %APPDATA%\Alia AI
+            base = Path(os.environ.get("APPDATA", Path.home()))
+            d = base / "Alia AI"
+        else:
+            # macOS — use ~/Library/Application Support/Alia AI
+            d = Path.home() / "Library" / "Application Support" / "Alia AI"
     else:
         # Running from source — keep everything in the project root
         d = Path(__file__).parent.parent

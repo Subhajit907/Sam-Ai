@@ -1,0 +1,82 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'          # trigger on version tags like v1.0.1
+  workflow_dispatch:  # also allows manual trigger from GitHub Actions tab
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+        shell: pwsh
+
+      - name: Download FFmpeg static build
+        run: |
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_extracted -Force
+          $bin = Get-ChildItem -Path ffmpeg_extracted -Recurse -Filter "bin" -Directory | Select-Object -First 1
+          Copy-Item "$($bin.FullName)\ffplay.exe" -Destination .
+          Copy-Item "$($bin.FullName)\ffmpeg.exe" -Destination .
+          Remove-Item ffmpeg.zip, ffmpeg_extracted -Recurse -Force
+        shell: pwsh
+
+      - name: Convert avatar to Windows icon (.ico)
+        run: |
+          python - <<'EOF'
+          from PIL import Image
+          img = Image.open("modules/assets/alia_avatar.jpg").convert("RGBA")
+          sizes = [(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)]
+          icons = [img.resize(s, Image.LANCZOS) for s in sizes]
+          icons[0].save("modules/assets/alia_icon.ico", format="ICO", sizes=sizes,
+                        append_images=icons[1:])
+          print("Icon created: modules/assets/alia_icon.ico")
+          EOF
+        shell: pwsh
+
+      - name: Build with PyInstaller (Windows spec)
+        run: |
+          python -m PyInstaller alia_windows.spec --clean -y
+        shell: pwsh
+
+      - name: Create installer output directory
+        run: New-Item -ItemType Directory -Force -Path installer_output
+        shell: pwsh
+
+      - name: Compile Inno Setup installer
+        run: |
+          $inno = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $inno installer\alia_setup.iss
+        shell: pwsh
+
+      - name: Upload installer as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Alia-AI-Windows-Installer
+          path: installer_output/Alia-AI-Installer-Windows.exe
+          retention-days: 30
+
+      - name: Attach installer to GitHub Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer_output/Alia-AI-Installer-Windows.exe
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
