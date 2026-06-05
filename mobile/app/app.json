@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Alia AI",
+    "slug": "alia-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#04040f"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.aliaai.mobile",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Alia needs the microphone to hear your voice commands.",
+        "NSSpeechRecognitionUsageDescription": "Alia uses speech recognition to understand you.",
+        "NSCameraUsageDescription": "Alia uses the camera to identify products and answer visual questions."
+      }
+    },
+    "android": {
+      "package": "com.aliaai.mobile",
+      "permissions": [
+        "RECORD_AUDIO",
+        "CAMERA"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-av",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Alia needs camera access for live vision mode."
+        }
+      ]
+    ],
+    "scheme": "aliaai"
+  }
+}
