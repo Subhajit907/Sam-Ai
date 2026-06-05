@@ -12,32 +12,77 @@ from modules.gui import AliaGUI
 from modules.voice import speak, listen, _calibrate
 from modules.commands import handle_command
 
+# Fired by the wakeword listener when "Hey Alia" is heard
+_wake_triggered = threading.Event()
+
+_DEACTIVATE_WORDS = {"bye", "goodbye", "that's all", "stop listening", "go to sleep"}
+
+
+def _on_wake_detected():
+    _wake_triggered.set()
+
 
 def voice_loop():
     """Runs in a background thread — listens and responds continuously."""
-    _calibrate()   # warm up mic before first greeting
-    speak("Hey, I'm Alia. What's up?")
+    _calibrate()
+
+    if not state.wake_mode:
+        speak("Hey, I'm Alia. What's up?")
+
     while True:
-        command = listen()
-        if command:
-            handle_command(command)
+        if state.wake_mode:
+            # ── Wake-word mode: wait silently until "Hey Alia" is heard ──
+            if state.gui:
+                state.gui.set_state("wake_word", "Say 'Hey Alia'...")
+            _wake_triggered.wait()
+            _wake_triggered.clear()
+            speak("Hey! How can I help?")
+
+            # ── Active conversation until timeout or deactivation phrase ──
+            consecutive_timeouts = 0
+            while True:
+                command = listen()
+                if not command:
+                    consecutive_timeouts += 1
+                    if consecutive_timeouts >= 2:
+                        speak("I'll keep listening. Just say Hey Alia when you need me.")
+                        from modules import wakeword
+                        wakeword.resume()
+                        break
+                    continue
+
+                consecutive_timeouts = 0
+
+                if any(w in command.lower() for w in _DEACTIVATE_WORDS):
+                    speak("Got it. Say Hey Alia whenever you need me!")
+                    from modules import wakeword
+                    wakeword.resume()
+                    break
+
+                handle_command(command)
+
         else:
-            # Brief pause before re-entering listen() so the mic can reset
-            # and the UI doesn't flash "Listening..." in a tight loop
-            time.sleep(0.4)
+            # ── Normal always-on mode (original behaviour) ──
+            command = listen()
+            if command:
+                handle_command(command)
+            else:
+                time.sleep(0.4)
 
 
 if __name__ == "__main__":
-    # Show first-run setup if mode hasn't been chosen yet
     if not is_configured():
         show_setup_dialog()
 
-    # Create and register GUI before starting voice loop
     gui = AliaGUI()
     state.gui = gui
 
-    # Voice loop runs in background; GUI must own the main thread
+    # If wake mode was already enabled (restored from settings), start the listener now
+    if state.wake_mode:
+        from modules import wakeword
+        wakeword.start(_on_wake_detected)
+
     t = threading.Thread(target=voice_loop, daemon=True)
     t.start()
 
-    gui.run()   # blocks until window is closed
+    gui.run()

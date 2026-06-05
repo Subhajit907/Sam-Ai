@@ -195,6 +195,16 @@ class AliaGUI:
         )
         tf.pack(side="left", padx=4)
 
+        # Wake word toggle button
+        _WAKE_BG  = "#120a00"
+        _WAKE_BDR = "#3a2200"
+        _WAKE_FG  = "#ff9f43"
+        wf, self._wake_btn = _styled_btn(
+            row1, "  🎙  WAKE  ", self._toggle_wake,
+            fg=_WAKE_FG, bg=_WAKE_BG, bdr=_WAKE_BDR,
+        )
+        wf.pack(side="left", padx=4)
+
         # Expansion row — doc badge and translator panel appear here when active
         row2 = tk.Frame(ctrl, bg=BG)
         row2.pack()
@@ -641,7 +651,8 @@ class AliaGUI:
 
         # ── Minimal state indicator ───────────────────────────────────────
         dot_colors = {"speaking": "#ff6b6b", "listening": "#66d9ff",
-                      "thinking": "#ffd166", "idle": "#06d6a0"}
+                      "thinking": "#ffd166", "idle": "#06d6a0",
+                      "wake_word": "#ff9f43"}
         dc = dot_colors.get(self.state, "#06d6a0")
         c.create_oval(cx - 208, 8, cx - 196, 20, fill=dc, outline="")
         c.create_text(cx - 192, 14, text=self.state.upper(),
@@ -1295,11 +1306,11 @@ class AliaGUI:
     def _animate(self):
         # Adaptive frame rate — slow down when idle so UI events (dropdowns, clicks)
         # get CPU time; only run at full 30ms when speaking (lip sync needs it).
-        _interval_ms = {"idle": 100, "listening": 60, "speaking": 30, "thinking": 60}
+        _interval_ms = {"idle": 100, "listening": 60, "speaking": 30, "thinking": 60, "wake_word": 120}
         _interval    = _interval_ms.get(self.state, 100)
         _scale       = _interval / 30.0   # keep apparent animation speed constant
 
-        _speeds = {"idle": 0.8, "listening": 2.0, "speaking": 1.5, "thinking": 2.5}
+        _speeds = {"idle": 0.8, "listening": 2.0, "speaking": 1.5, "thinking": 2.5, "wake_word": 0.5}
         self.angle = (self.angle + _speeds.get(self.state, 0.8) * _scale) % 360
 
         self.pulse += 0.05 * self.pulse_dir * _scale
@@ -1357,6 +1368,7 @@ class AliaGUI:
                 "listening": "LISTENING ...",
                 "speaking":  "SPEAKING",
                 "thinking":  "PROCESSING ...",
+                "wake_word": "SAY 'HEY ALIA'...",
             }
             self.status_var.set(labels.get(state) or state.upper())
             if text:
@@ -1458,6 +1470,26 @@ class AliaGUI:
                 win.destroy()
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------ #
+    #  Wake word toggle
+    # ------------------------------------------------------------------ #
+    def _toggle_wake(self):
+        from modules import state, wakeword
+        import sam  # access the shared _on_wake_detected callback
+
+        if state.wake_mode:
+            # Turn OFF
+            state.wake_mode = False
+            wakeword.stop()
+            self._wake_btn.config(fg="#ff9f43", bg="#120a00", text="  🎙  WAKE  ")
+            self.set_state("idle", "Wake word disabled.")
+        else:
+            # Turn ON
+            state.wake_mode = True
+            wakeword.start(sam._on_wake_detected)
+            self._wake_btn.config(fg="#fff0d0", bg="#2a1500", text="  🎙  WAKE ON  ")
+            self.set_state("wake_word", "Say 'Hey Alia'...")
 
     # ------------------------------------------------------------------ #
     #  Lip sync API (called from voice thread)

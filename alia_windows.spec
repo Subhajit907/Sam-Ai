@@ -45,6 +45,8 @@ a = Analysis(
         'yt_dlp',
         # database
         'sqlite3',
+        # wake word
+        'modules.wakeword',
     ],
     hookspath=[],
     hooksconfig={},
